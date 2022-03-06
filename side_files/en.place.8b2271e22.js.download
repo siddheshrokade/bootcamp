@@ -1,0 +1,722 @@
+
+/* 
+ * pVenue.js
+ */
+var pVenue = {
+    specs : null,
+
+    $main    : null,
+    $gallery : null,
+    $packs   : null,
+
+    schedule : {},
+    pickedDate : null,
+
+    object : {
+        id   : 0,
+        type : null,
+    },
+    alias : {
+        restaurants : 'restaurant',
+        venues      : 'venue',
+    },
+    fotorama : null,
+    rooms : {},
+    topProps : [
+        'param_min_price',
+        'param_empty_price',
+        'param_capacity',
+        'param_banquet_price',
+    ],
+
+    tpl : {
+        freedate : twig.compile(
+            '<span class="room_freedate-{{ busy }}" room-elem="freedate">{{ statusText }}</span>' +
+            '<span class="room_changeDate"><a venue-action="weddate">' + t('Change date') + '</a></span>'),
+        media : twig.compile(
+            '<a href="{{ media.url }}" data-type="{{ media.type }}" data-link="{{ media.preview_url.750x500x0 }}" id="id{{ media.id }}" data-thumb="{{ media.preview_url.750x500x0 }}"></a>'),
+        topProps : twig.compile('<div class="room_props-top" room-elem="topprops"></div>'),
+        prop : twig.compile(
+            '<div class="room_prop">' +
+                '<span class="room_prop_name">{{ prop.name }}</span>' +
+                '{% if prop.display.type == "checked" %}' +
+                    '<span class="room_prop_value-yes"></span>' +
+                '{% elseif prop.display.type == "nope" %}' +
+                    '<span class="room_prop_value-nope"></span>' +
+                '{% else %}' +
+                    '<span class="room_prop_value">{{ prop.value_text }}</span>' +
+                '{% endif %}' +
+            '</div>'),
+        ny : {
+            main : twig.compile('<div class="room_NY" room-elem="topprops">{{ parts|join("") }}</div>'),
+            part : twig.compile(
+                '<div class="room_NY_part">' +
+                    '<p class="room_NY_caption">{{ caption }}</p>' +
+                    '<div class="room_props-top">' +
+                        '{% for prop in props %}' +
+                            '<div class="room_prop">' +
+                                '<span class="room_prop_name">{{ prop.name }}</span>' +
+                                '<span class="room_prop_value">{{ prop.text }}</span>' +
+                            '</div>' +
+                        '{% endfor %}' +
+                    '</div>' +
+                '</div>'),
+        },
+    },
+
+    init : function() {
+        pVenue.$main = $('#pVenue')
+        if (!pVenue.$main.length) {
+            pVenue.$main = null
+            return false
+        }
+        pVenue.object.id = +pVenue.$main.attr('venue-id')
+        pVenue.object.type = pVenue.$main.attr('venue-type').toLowerCase()
+        moment.locale(LOCALE)
+        place.init()
+        place.calendar.init()
+
+        pVenue.$packs = pVenue.$main.find('[pvenue-elem="packs"]')
+        pVenue.$gallery = pVenue.$main.find('#gallery')
+        pVenue.$gallery.on('fotorama:ready', function (e, fotorama) {
+            pVenue.fotorama = fotorama
+        })
+        if (pVenue.$gallery.children().length) {
+            pVenue.$gallery.fotorama()
+        }
+
+        pVenue.$main.find('[room-elem="main"]').each(function(i, $room) {
+            $room = $($room)
+            var roomId = +$room.attr('room-id')
+            pVenue.rooms[roomId] = {
+                id       : roomId,
+                $main    : $room,
+                $gallery : $room.find('[room-elem="gallery"]'),
+                fotorama : null,
+            }
+            pVenue.rooms[roomId].$gallery.on('fotorama:ready', function (e, fotorama) {
+                pVenue.rooms[roomId].fotorama = fotorama
+            })
+            if (pVenue.rooms[roomId].$gallery.children().length) {
+                pVenue.rooms[roomId].$gallery.fotorama()
+            }
+        })
+        pVenue.$main.on(pVenue.events)
+
+        pVenue.specs.init()
+    },
+
+    events : {
+        click : function(ev) {
+            var $el = $(ev.target)
+            if ($el.is('[venue-action="weddate"]')) {
+                pVenue.calendar.toggle($el.parent())
+            }
+        }
+    },
+
+    showRoomsSchedule : function() {
+        pVenue.$main.find('[room-elem="main"]').each(function(i, $room){
+            $room = $($room)
+            var roomId = +$room.attr('room-id')
+
+            var busy = pVenue.schedule && pVenue.schedule[roomId] && pVenue.schedule[roomId][pVenue.pickedDate] || 0
+            var statusText
+            if (busy === 0) {
+                statusText = t('Available on {date}', {'{date}': moment(pVenue.pickedDate).format('D MMMM') })
+            } else if (busy == 1) {
+                statusText = t('Probably available on {date}', {'{date}': moment(pVenue.pickedDate).format('D MMMM') })
+            } else if (busy == 2) {
+                statusText = t('Prebooked on {date}', {'{date}': moment(pVenue.pickedDate).format('D MMMM') })
+            } else if (busy == 3) {
+                statusText = t('Busy on {date}', {'{date}': moment(pVenue.pickedDate).format('D MMMM') })
+            }
+
+            var $freedate = $room.find('[room-elem="freedate"]')
+            if ($freedate.length) {
+                $freedate.attr('class', 'room_freedate-' + busy).text(statusText)
+            } else {
+                var $schedule = $room.find('[room-elem="schedule"]')
+                $schedule.empty()
+                twig.render(pVenue.tpl.freedate, {
+                    busy : busy,
+                    statusText : statusText,
+                }, true).appendTo($schedule)
+            }
+        })
+    },
+
+    setWeddingDate : function(date) {
+        pVenue.pickedDate = date
+        $.ajax({
+            type     : 'PUT',
+            url      : API_URL + '/v2/directory/filterDate',
+            data     : JSON.stringify({
+                date : pVenue.pickedDate,
+            }),
+            dataType : 'json',
+            xhrFields: {
+                withCredentials: true
+            },
+        })
+    },
+
+    calendar : {
+        toggle : function($weddate) {
+            if ($weddate.is('._calendarOwner')) {
+                calendar.close()
+            } else {
+                var schedule = {}
+                var roomId = +$weddate.closest('[room-id]').attr('room-id')
+                var dates = pVenue.schedule[roomId]
+                for (var date in dates) if (dates.hasOwnProperty(date)) {
+                    var status = +dates[date]
+                    if (status == 3) {
+                        var title = t('Not available')
+                    } else if (status == 2) {
+                        var title = t('Prebooked')
+                    } else if (status === 0) {
+                        var title = t('Available')
+                    }
+                    schedule[date] = {
+                        status : status,
+                        title  : title,
+                    }
+                }
+                calendar.init($weddate, {
+                    interval : '+12',
+                    type     : 'point',
+                    schedule : schedule,
+                    current  : pVenue.pickedDate || 'now',
+                    title    : t('Available'),
+                    single   : true,
+                }, {
+                    onPick : pVenue.calendar.onPick,
+                })
+            }
+        },
+        onPick : function(dates) {
+            pVenue.setWeddingDate(dates.pop())
+            pVenue.showRoomsSchedule()
+            calendar.close()
+        }
+    },
+
+    refreshRooms: function(info) {
+        pVenue.$main.find('[room-elem="main"]').addClass('h') // в ответе только подходящие залы, так что сначала скрываем все
+        info.rooms.map(function(room) {
+            var $room = pVenue.rooms[room.id].$main
+            if (info.eventId && room.specs) {
+                var spec = room.specs.getBy('id', +info.eventId)
+                if (!spec || !spec.status) {
+                    $room.addClass('h')
+                    return
+                }
+            }
+            if ($room.hasClass('h')) {
+                $room.removeClass('h')
+            }
+
+            var $oldTopProps = $room.find('[room-elem="topprops"]')
+            var $topProps = null
+            var $props = $room.find('[room-elem="props"]')
+            $props.empty()
+            if (room.is_new_year && room.new_year) {
+                var parts = []
+                if (room.new_year.collecting) {
+                    parts.push(twig.render(pVenue.tpl.ny.part, {
+                        caption : t(''),
+                        props   : room.new_year.collecting,
+                    }))
+                }
+                if (room.new_year.closing) {
+                    parts.push(twig.render(pVenue.tpl.ny.part, {
+                        caption : t(''),
+                        props   : room.new_year.closing,
+                    }))
+                }
+                $topProps = twig.render(pVenue.tpl.ny.main, {parts:parts}, true)
+            } else {
+                $topProps = twig.render(pVenue.tpl.topProps, {}, true)
+                twig.render(pVenue.tpl.prop, {
+                    prop : {
+                        name       : t('Type'),
+                        value_text : room.type_name,
+                    },
+                }, true).appendTo($props)
+                room.params_sort.map(function(param_label) {
+                    if (param_label == 'param_features') {
+                        return false
+                    }
+                    var param = room.params[param_label]
+                    if (!param || !param.value_text) {
+                        return false
+                    }
+                    var $prop = twig.render(pVenue.tpl.prop, {prop:param}, true)
+                    if (pVenue.topProps.includes(param_label)) {
+                        $prop.appendTo($topProps)
+                    } else {
+                        $prop.appendTo($props)
+                    }
+                })
+            }
+            $topProps.insertBefore($oldTopProps)
+            $oldTopProps.remove()
+
+            if (pVenue.rooms[room.id].fotorama) {
+                var data = room.media.map(function(media) {
+                    return {
+                        img   : media.preview_url['750x500x0'],
+                        thumb : media.preview_url['750x500x0'],
+                    }
+                })
+                pVenue.rooms[room.id].fotorama.load(data)
+            } else if (room.media.length) {
+                pVenue.rooms[room.id].$gallery.empty()
+                room.media.forEach(function(media) {
+                    twig.render(pVenue.tpl.media, {media:media}, true).appendTo(pVenue.rooms[room.id].$gallery)
+                })
+                setTimeout(function() {
+                    pVenue.rooms[room.id].$gallery.fotorama()
+                }, 800)
+            }
+        })
+    },
+
+    refreshMedias : function(medias) {
+        if (pVenue.fotorama) {
+            var data = medias.map(function(media) {
+                return {
+                    img   : media.preview_url['750x500x0'],
+                    thumb : media.preview_url['750x500x0'],
+                }
+            })
+            pVenue.fotorama.load(data)
+        } else if (medias.length) {
+            pVenue.$gallery.empty()
+            medias.forEach(function(media) {
+                twig.render(pVenue.tpl.media, {media:media}, true).appendTo(pVenue.$gallery)
+            })
+            pVenue.$gallery.fotorama()
+        }
+    },
+}
+
+function initRestaurantShow() {
+    pVenue.init()
+    place.init()
+    place.calendar.init()
+    packs.init()
+}
+
+function initVenueShow() {
+    pVenue.init()
+    place.init()
+    place.calendar.init()
+    packs.init()
+}
+
+/* 
+ * pVenue_specs.js
+ */
+pVenue.specs = {
+    $switchers : null,
+    $texts     : null,
+
+    current : {
+        id        : 0,
+        $switcher : null,
+        $text     : null,
+    },
+
+    events : {
+        click : function(ev) {
+            var $el = $(ev.target)
+            if ($el.is('[specs-action="switch"]')) {
+                pVenue.specs.switchSpec(+$el.attr('spec-id'))
+            }
+        },
+    },
+
+    init : function() {
+        var Specs = pVenue.specs
+        Specs.$switchers = pVenue.$main.find('[specs-elem="switchers"]')
+        if (!Specs.$switchers.length) {
+            Specs.$switchers = null
+            return false
+        }
+        Specs.$texts = pVenue.$main.find('[specs-elem="texts"]')
+        Specs.current.$switcher = Specs.$switchers.find('._cur')
+        Specs.current.id = +Specs.current.$switcher.attr('spec-id')
+        Specs.current.$text = Specs.$texts.find('[spec-id="' + Specs.current.id + '"]')
+
+        Specs.$switchers.on(Specs.events)
+    },
+
+    switchSpec : function(specId) {
+        var Specs = pVenue.specs
+        if (Specs.current.id == specId) {
+            return false
+        }
+        Specs.current.$switcher.removeClass('_cur')
+        Specs.current.$text.addClass('h')
+
+        Specs.current.id = specId
+        Specs.current.$switcher = Specs.$switchers.find('[spec-id="' + Specs.current.id + '"]').addClass('_cur')
+        Specs.current.$text = Specs.$texts.find('[spec-id="' + Specs.current.id + '"]').removeClass('h')
+        showMore.init()
+
+        Specs.setSpec(Specs.current.id)
+        .then(Specs.loadRoomsInfo)
+        .then(function(response) {
+            pVenue.refreshRooms({
+                rooms   : response.rooms,
+                eventId : response.eventId,
+            })
+            pVenue.refreshMedias(response.medias)
+
+            if (packs.$list) {
+                var $packs = packs.$list.children()
+                if (Specs.current.id == 0) {
+                    pVenue.$packs.removeClass('h')
+                    $packs.removeClass('h')
+                } else {
+                    $packs.addClass('h')
+                    $packs = $packs.filter('[spec-id~="' + Specs.current.id + '"]')
+                    if (!$packs.length) {
+                        pVenue.$packs.addClass('h')
+                    } else {
+                        pVenue.$packs.removeClass('h')
+                        $packs.removeClass('h')
+                    }
+                }
+            }
+        })
+    },
+
+    setSpec : function(specId) {
+        return new Promise(function(resolve, reject) {
+            $.ajax({
+                type     : 'PUT',
+                url      : API_URL + '/v2/' + pVenue.object.type + '/' + pVenue.object.id  + '/switchSpec',
+                data     :  JSON.stringify({
+                    specId : specId
+                }),
+                dataType : 'json',
+                xhrFields: {
+                    withCredentials: true
+                },
+                success  : function(json) {
+                    var url = document.location.origin + document.location.pathname + json.search
+                    history.pushState(null, null, url)
+                    resolve(specId)
+                }
+            })
+        })
+    },
+
+    loadRoomsInfo : function(eventId) {
+        return new Promise(function(resolve, reject) {
+            $.ajax({
+                type     : 'GET',
+                url      : API_URL + '/v2/' + pVenue.object.type + '/' + pVenue.object.id,
+                data     : {
+                    fields : 'media',
+                    embed  : 'rooms.specs',
+                    preview_size : '0x200x0,266x200x1,750x500x0',
+                    event : eventId,
+                },
+                dataType : 'json',
+                xhrFields: {
+                    withCredentials: true
+                },
+                success  : function(json) {
+                    var model = json[pVenue.alias[pVenue.object.type]]
+                    resolve({
+                        medias  : model.media,
+                        rooms   : model.rooms,
+                        eventId : eventId,
+                    })
+                }
+            })
+        })
+    }
+}
+
+/* 
+ * place.js
+ */
+var place = {
+    calendar : null,
+    edit     : null,
+
+    $main : null,
+
+    info : null,
+
+    tpl : {
+        map :
+            '<div class="ppContacts">' +
+                '<p class="ppContacts_name">{{ name }}</p>' +
+                '<div map-elem="main" class="ppContacts_map"></div>' +
+            '</div>',
+    },
+    events : {
+        click : function(ev){
+            var $el = $(ev.target);
+            if ($el.is('[data-expand]')) {
+                place.$main.find('[data-expand_id="' + $el.attr('data-expand') + '"]').addClass('_expanded');
+                $el.parent().addClass('h');
+            } else if ($el.is('[place-action="showmap"]')) {
+                place.showOnMap({
+                    name    : $el.attr('data-name'),
+                    address : $el.attr('data-address'),
+                    coords  : [$el.attr('data-latitude'),$el.attr('data-longitude')],
+                    opened  : true,
+                })
+            }
+        }
+    },
+
+    showOnMap : function(point) {
+        var $map = simpleTpl(place.tpl.map, {name:point.name}, true)
+        lightbox.show($map, 700)
+        gorkoMap.init($map.find('[map-elem="main"]'), [point])
+    },
+
+    initMap : function() {
+        var $map = $('#place_map')
+        if ($map.length) {
+            if (!mapPoints && !place.info) {
+                $map.remove()
+            } else {
+                var point = {}
+                var info
+                if (place.info) {
+                    info = place.info
+                    point.coords = [info.coords.latitude, info.coords.longitude]
+                    if (info.name) {
+                        point.name = info.name
+                    }
+                    if (info.address) {
+                        point.address
+                    }
+                }
+                if (mapPoints && mapPoints.length) {
+                    info = mapPoints[0]
+                    if (!point.coords && info.lat && info.lng) {
+                        point.coords = [info.lat, info.lng]
+                    }
+                    if (!point.address && info.address) {
+                        point.address = info.address
+                    }
+                }
+                gorkoMap.init($map, [point])
+            }
+        }
+    },
+
+    init : function() {
+        place.$main = $('#content_block')
+        if (!place.$main.length) {
+            place.$main = null
+            return false
+        }
+
+        place.initMap()
+
+        $(window).on(place.events);
+    }
+}
+
+function initCarShow() {
+    place.init();
+}
+function initPlaceShow() {
+    place.init();
+}
+
+/* 
+ * placeAddmedia.js
+ */
+function initPlaceAddmedia() {
+    oldupload.init();
+}
+
+/* 
+ * place_calendar.js
+ */
+place.calendar = {
+    $main : null,
+    $calendars : null,
+
+    tpl: {
+        main:
+            '<div class="placeCalendar">' +
+                '<h2 class="placeCalendar_title">' + t('{name} occupancy', {'{name}': '{{ name }}'}) + '</h2>' +
+                '{{ select$ }}' +
+                '{{ calendars$ }}' +
+            '</div>',
+        select : '<select class="placeCalendar_select" calendar-action="change">{{ options$ }}</select>',
+        option : '<option value="{{ roomId }}"{% if selected %} selected{% endif %}>{{ name }}</option>',
+        iframe :
+            '<div class="placeCalendar_calendar{% if hidden %} h{% endif %}" calendar-elem="main" room-id="{{ roomId }}">' +
+                '<p class="placeCalendar_caption">{{ name }}</p>' +
+                '<iframe src="https://calendar.google.com/calendar/embed?showTitle=0&amp;showCalendars=0&amp;showTz=0&amp;height=600&amp;wkst=2&amp;hl='+LANG+'&amp;bgcolor=%23FFFFFF&amp;src={{ calendarId }}&amp;color=%23865A5A&amp;ctz=Europe%2FSamara" style="border-width:0" width="660" height="460" frameborder="0" scrolling="no">' +
+                '</iframe>' +
+            '</div>'
+    },
+
+    close : function() {
+        place.calendar.$main = null
+        place.calendar.$calendars = null
+        if ("pushState" in history)
+            history.pushState("", document.title, document.location.pathname);
+    },
+
+    render : function(_roomId) {
+        var calendars$ = []
+        var options$ = [
+            simpleTpl(place.calendar.tpl.option, {name: t('All spaces'), id: 0})
+        ]
+        if (googleCalendars) {
+            $.each(googleCalendars, function (id, data) {
+                var tplParams = data
+                tplParams.roomId = +id
+                tplParams.hidden = (_roomId && tplParams.roomId !== _roomId)
+                calendars$.push(simpleTpl(place.calendar.tpl.iframe, tplParams))
+
+                tplParams.selected = (_roomId == tplParams.roomId)
+                options$.push(simpleTpl(place.calendar.tpl.option, tplParams))
+            })
+        }
+        if (calendars$.length) {
+            var tplParams = {
+                'name' : place.info.param_type + ' ' + place.info.name,
+                'calendars$' : calendars$.join(''),
+            }
+            if (options$.length > 2) {
+                tplParams.select$ = simpleTpl(place.calendar.tpl.select, {options$: options$.join('')})
+            }
+        }
+        return simpleTpl(place.calendar.tpl.main, tplParams, true)
+    },
+
+    showRoom : function(_roomId) {
+        _roomId = +_roomId
+
+        if (!_roomId) {
+            if ("pushState" in history)
+                history.pushState("", document.title, document.location.pathname + '#calendar');
+        } else {
+            if ("pushState" in history)
+                history.pushState("", document.title, document.location.pathname + '#calendar-' + _roomId);
+        }
+
+        var calendar = place.calendar
+        if (calendar.$main === null) {
+            calendar.$main = calendar.render(_roomId)
+            calendar.$calendars = calendar.$main.find('[calendar-elem="main"]')
+            lightbox.show(calendar.$main, 700, {close:calendar.close})
+            return true
+        }
+
+        if (!_roomId) {
+            calendar.$calendars.removeClass('h')
+        } else {
+            calendar.$calendars.addClass('h')
+            calendar.$calendars.filter('[room-id="' + _roomId + '"]').removeClass('h')
+        }
+    },
+
+    events : {
+        click : function(ev) {
+            var $el = $(ev.target)
+            if ($el.closest('[calendar-action="show"]').length) {
+                var roomId = $el.closest('[calendar-action="show"]').attr('room-id')
+                place.calendar.showRoom(roomId)
+            }
+        },
+        change : function(ev) {
+            var $el = $(ev.target)
+            if ($el.is('[calendar-action="change"]')) {
+                place.calendar.showRoom($el.val())
+            }
+        }
+    },
+
+    init: function () {
+        if (document.location.hash.indexOf('#calendar') === 0) {
+            var hash = document.location.hash.split('-')
+            place.calendar.showRoom(hash[1] ? hash[1] : 0)
+        }
+        $(window).on(place.calendar.events)
+    }
+}
+/* 
+ * place_edit.js
+ */
+place.edit = {
+    $main : null,
+
+    add : function() {
+        $.ajax({
+            type     : 'POST',
+            url      : '/a/place/addPlace/',
+            data     : place.edit.$main.serialize(),
+            dataType : 'json',
+            success  : function(result){
+                if (result.url_addmedia.length) {
+                    document.location.href = result.url_addmedia;
+                }
+            }
+        });
+    },
+
+    events : {
+        click : function(ev){
+            var $el = $(ev.target);
+            if ($el.is('[catalogedit-action="add"]')) {
+                place.edit.add();
+            }
+        }
+    },
+
+    init : function() {
+        var editor = place.edit
+        if (editor.$main !== null) {
+            return true
+        }
+        editor.$main = $('#placeEdit_form')
+        if (!editor.$main.length) {
+            return false;
+        }
+
+        fillFields.init(editor.$main);
+
+        var mapParams = {
+            editable : true,
+            $elem : {
+                address : editor.$main.find('[name="address"]'),
+                latitude : editor.$main.find('[name="Place[y]"]'),
+                longitude : editor.$main.find('[name="Place[x]"]'),
+            },
+        }
+        var $map = editor.$main.find('#placeEdit_map');
+        cityName = $map.attr('data-city');
+        if (!$map.attr('data-lng') || !$map.attr('data-lat')) {
+            mapParams.cityName = t('{city} city', {'{city}':cityName})
+            gorkoMap.init($map, [], mapParams)
+        } else {
+            gorkoMap.init($map, [{
+                coords : [$map.attr('data-lat'), $map.attr('data-lng')]
+            }], mapParams)
+        }
+
+        editor.$main.on(editor.events);
+    }
+}
+
+function initPlaceEdit() {
+    place.edit.init()
+}

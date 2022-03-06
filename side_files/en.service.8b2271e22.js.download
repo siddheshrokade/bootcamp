@@ -1,0 +1,4096 @@
+
+/* 
+ * cars.js
+ */
+var cars = {
+    car    : null,
+    request : null,
+
+    $list : null,
+
+    inited : false,
+
+    events : {
+        click : function(ev) {
+            var $el = $(ev.target)
+            $showCar = $el.closest('[car-action="show"]')
+            if ($showCar.length) {
+                ev.preventDefault()
+                var $car = $showCar.closest('[car-elem="card"]')
+                var mediaId = $showCar.attr('car-media') || null
+                cars.car.show($car.attr('car-id'), null, mediaId)
+            }
+        }
+    },
+
+    init : function() {
+        if (cars.inited) return true
+
+        cars.$list = $('[cars-elem="list"]')
+        if (!cars.$list.length) {
+            cars.$list = null
+        }
+
+        $(window).on(cars.events)
+        cars.inited = true
+    }
+}
+
+$(document).ready(function(){
+    cars.init()
+});
+
+/* 
+ * cars_car.js
+ */
+cars.car = {
+    $main   : null,
+    $thumbs : null,
+    $medias : null,
+    $cache  : null,
+
+    id    : 0,
+    cache : {},
+    info  : null,
+    start : {
+        title : null,
+        url : null,
+    },
+    list  : [],
+    index : 0,
+    paramSort : [
+        'param_driver',
+        'param_year',
+        'param_type',
+        'param_car_model_id',
+        'param_length',
+        'param_color',
+        'param_capacity',
+    ],
+
+    MEDIA_MAX_WIDTH : 531,
+
+    tpl : {
+        cache : '<div class="pItem_cache"></div>',
+        main : Twig.twig({data:
+            '<div class="pCar" car-id="{{ id }}">' +
+                '<div class="pItem_title">' +
+                    '<a class="fav pItem_fav" fav-action="toggle" model-name="car" model-id="{{ id }}" fav-value="{{ isFav }}"></a>' +
+                    '<h1>{% if seo.h1 %}{{ seo.h1 }}{% else %}{{ name }}{% endif %}</h1>' +
+                '</div>' +
+                '<div class="pItem_info">' +
+                    '<div class="pItem_owner">' +
+                        '{% if mainPrice.date %}' +
+                            '<p class="pItem_date">{{ mainPrice.date }}</p>' +
+                        '{% endif %}' +
+                        '{% if mainPrice.prices %}' +
+                            '{% for i,price in mainPrice.prices %}' +
+                                '<div class="pCar_price">' +
+                                    '{{ price }}' +
+                                    '{% if mainPrice.rate %}' +
+                                        '<span class="pCar_rate">{{ mainPrice.rate[i] }}</span>' +
+                                    '{% endif %}' +
+                                    '{% if mainPrice.min[i] %}' +
+                                        '<p class="pCar_min">' + t('Min. time') + ': {{ mainPrice.min[i] }}</p>' +
+                                    '{% endif %}' +
+                                '</div>' +
+                            '{% endfor %}' +
+                        '{% endif %}' +
+                        '<p class="pItem_owner_name"><a href="{{ user.profile_url }}" target="_blank">{{ user.name }}</a></p>' +
+                        '<button class="button-small" car-action="contacts" cp-user="{{ user.id }}" cp-contentType="Car" cp-contentId="{{ id }}" controller="Car" action="show">' + t('Show phone and contact info') + '</button>' +
+                    '</div>' +
+                    '{{ params }}' +
+                    '{% if text %}' +
+                        '<div class="pItem_description">{{ text }}</div>' +
+                    '{% endif %}' +
+                '</div>' +
+                '{{ gallery }}' +
+                '{{ rents }}' +
+                '{{ request }}' +
+            '</div>'
+        }),
+        params : {
+            main : '<div class="pItem_params">{{ params }}</div>',
+            param : '<p class="pItem_param"><span class="pItem_param_name">{{ name }}</span> {{ value_text }}</p>',
+        },
+        gallery : {
+            main :
+                '<div class="pItem_gallery">' +
+                    '<div class="pItem_stage">{{ medias }}</div>' +
+                    '<div class="pItem_thumbs">{{ thumbs }}</div>' +
+                '</div>',
+            media : '<img class="pItem_media" src="{{ media.preview_url.750x500x0 }}" gallery-elem="media">',
+            thumb : Twig.twig({data:
+                '{% if media.type == "video_embed" %}' +
+                    '<span class="pItem_thumb-video" src="{{ media.preview_url.60x60x1 }}" gallery-action="video" media-elem="main" media-id="{{ media.id }}" duration-text="{{ media.duration }}">' +
+                        '<img src="{{ media.preview_url.95x60x1 }}" width="95" height="60">' +
+                    '</span>' +
+                '{% else %}' +
+                    '<img class="pItem_thumb" src="{{ media.preview_url.95x60x1 }}" media-elem="main" sized-width="{{ media.width }}" sized-height="{{ media.height }}" width="95" height="60" gallery-action="media" media-id="{{ media.id }}">' +
+                '{% endif %}'
+            }),
+        },
+        rents : {
+            main :
+                '<div class="pCar_rents">' +
+                    '<h3 class="pItem_caption">' + t('Rental Price') + '</h3>' +
+                    '{{ rents }}' +
+                '</div>',
+            rent :
+                '<div class="carRent{% if expanded %} _expanded{% endif %}" rent-elem="main">' +
+                    '<a class="carRent_caption" rent-action="toggle">' +
+                        '<span class="carRent_dateName">{{ dateName }}</span>' +
+                        '<span class="carRent_togger" text-expand="' + t('Show more') + '" text-collapse="' + t('Show less') + '"></span>' +
+                    '</a>' +
+                    '<div class="carRent_prices">' +
+                        '<table class="carRent_table">' +
+                            '<tr class="carRent_row-day">' +
+                                '<th class="carRent_cell"><div class="carRent_header">' + t('Day') + '</div></th>' +
+                                '{{ row.days }}' +
+                            '</tr>' +
+                            '<tr class="carRent_row-time">' +
+                                '<th class="carRent_cell"><div class="carRent_header">' + t('Time') + '</div></th>' +
+                                '{{ row.time }}' +
+                            '</tr>' +
+                            '<tr class="carRent_row-cost">' +
+                                '<th class="carRent_cell"><div class="carRent_header">' + t('Price') + '</div></th>' +
+                                '{{ row.cost }}' +
+                            '</tr>' +
+                            '<tr class="carRent_row-min">' +
+                                '<th class="carRent_cell"><div class="carRent_header">' + t('Min. rental time + delivery time') + '</div></th>' +
+                                '{{ row.min }}' +
+                            '</tr>' +
+                        '</table>' +
+                    '</div>' +
+                '</div>',
+            cell :
+                '<td class="carRent_cell{% if needJoin %}-join{% endif %}{% if current %} _cur{% endif %}"{% if hasRate %} colspan="2"{% endif %}>' +
+                    '{% if cost_display %}' +
+                        '<span class="carRent_cost">{{ cost_display }}</span>' + t('hour') +
+                    '{% else %}' +
+                        '{{ value }}' +
+                    '{% endif %}' +
+                '</td>'
+        },
+        request : Twig.twig({data:
+            '<div class="pCar_footer">' +
+                '{% if car.type.key =="auto" %}' +
+                    t('Vehicle rental price is not specified') +
+                '{% else %}' +
+                    t('Limo rental price is not specified') +
+                '{% endif %}' +
+                ' <a class="pCar_request" car-action="request">' + t('Request pricing') + '</a>' +
+            '</div>'
+        }),
+    },
+
+    close : function() {
+        var Car = cars.car
+
+        history.pushState(null, null, Car.start.url)
+        ajaxHit(Car.start.url)
+        document.title = Car.start.title
+
+        Car.$main   = null
+        Car.$thumbs = null
+        Car.$medias  = null
+        Car.info  = null
+        Car.start.url   = null
+        Car.start.title = null
+        Car.list = []
+    },
+
+    render : {
+        main : function(carInfo) {
+            var Car = cars.car
+            var tplParams = {
+                rents   : null,
+                params  : null,
+                gallery : null,
+                request : Car.tpl.request.render({'car':carInfo}),
+            }
+            for (var key in carInfo) if (carInfo.hasOwnProperty(key)) {
+                switch (key) {
+                    case 'media':
+                        tplParams.gallery = Car.render.gallery(carInfo.media)
+                        break;
+                    case 'tariffs':
+                        var viewerPrice = carInfo.viewer_price_in_list.price
+                        if (viewerPrice.log == 'by_wedding_date') {
+                            var tariffId = viewerPrice.tariff_id
+                            var tariffIndex = viewerPrice.tariff_index
+                            tplParams.request = null
+                        } else {
+                            var tariffId = null
+                            var tariffIndex = null
+                        }
+                        tplParams.rents = Car.render.rents(carInfo.tariffs, tariffId, tariffIndex)
+                        break;
+                    case 'params' :
+                        tplParams.params = Car.render.params(carInfo.params)
+                        break;
+                    default:
+                        tplParams[key] = carInfo[key];
+                        break;
+                }
+            }
+            tplParams.isFav = +fav.isFav('car', carInfo.id)
+            return $(Car.tpl.main.render(tplParams))
+        },
+        params : function(params) {
+            if (!objLength(params)) {
+                return null
+            }
+            var Car = cars.car
+            var params$ = ''
+            for (var i=0; Car.paramSort[i]; i++) {
+                var label = Car.paramSort[i]
+                var param = params[label]
+                if (!param || param.value === null) {
+                    continue
+                }
+                params$ += simpleTpl(Car.tpl.params.param, {
+                    name : param.name,
+                    value_text : param.value_text,
+                });
+            }
+            return simpleTpl(Car.tpl.params.main, {params:params$})
+        },
+        gallery: function(media) {
+            if (!media.length) {
+                return null
+            }
+            var Car = cars.car
+            var thumbs$ = ''
+            var medias$ = ''
+            var current = null
+            for (var i=0; media[i]; i++) {
+                var size = media[i].original_size.split('x')
+                media[i].width = size[0]
+                media[i].height = size[1]
+                if (media[i].width > Car.MEDIA_MAX_WIDTH) {
+                    media[i].height = Math.round(media[i].height / media[i].width * Car.MEDIA_MAX_WIDTH)
+                    media[i].width = Car.MEDIA_MAX_WIDTH
+                }
+                if (media[i].type == "video_embed") {
+                    media[i].duration = Math.floor(media[i].video_duration / 60)
+                    media[i].duration += ':' + (media[i].video_duration - media[i].duration*60).padLeft()
+                }
+                thumbs$ += Car.tpl.gallery.thumb.render({
+                    media : media[i],
+                })
+                medias$ += simpleTpl(Car.tpl.gallery.media, {
+                    media : media[i],
+                })
+            }
+            return simpleTpl(Car.tpl.gallery.main, {
+                bigMedia : media[current],
+                thumbs : thumbs$,
+                medias : medias$,
+            })
+        },
+        rents : function(tariffs, tariffId, tariffIndex) {
+            if (!tariffs.length) {
+                return null
+            }
+            var Car = cars.car
+            var rents$ = ''
+            for (var i=0; tariffs[i]; i++) {
+                var tariff = tariffs[i]
+                var rent = {
+                    dateName : tariff.dateName,
+                    expanded : (tariffId == tariff.id),
+                    row : {
+                        days : '',
+                        time : '',
+                        cost : '',
+                        min  : '',
+                    }
+                }
+                for (var dayI=0; tariff.days[dayI]; dayI++) {
+                    var dayInfo = tariff.days[dayI],
+                        dayItem = tariff.items[0].data[dayI],
+                        hasRate = !!dayInfo.rate,
+                        current = (tariffId == tariff.id && tariffIndex == dayI)
+                    rent.row.days += simpleTpl(Car.tpl.rents.cell, {
+                        hasRate : hasRate,
+                        value   : dayInfo.name,
+                        current : current,
+                    })
+                    rent.row.time += simpleTpl(Car.tpl.rents.cell, {
+                        needJoin : hasRate,
+                        value    : hasRate ? t('before {time}', {'{time}' : dayInfo.rate}) : t('Any'),
+                        current  : current,
+                    })
+                    rent.row.cost += simpleTpl(Car.tpl.rents.cell, {
+                        needJoin : hasRate,
+                        cost_display : dayItem.cost_display[0],
+                        current  : current,
+                    })
+                    rent.row.min += simpleTpl(Car.tpl.rents.cell, {
+                        needJoin : hasRate,
+                        value    : dayItem.min[0],
+                        current  : current,
+                    })
+                    if (hasRate) {
+                        rent.row.time += simpleTpl(Car.tpl.rents.cell, {
+                            value : t('after {time}', {'{time}' : dayInfo.rate}),
+                            current : current,
+                        })
+                        rent.row.cost += simpleTpl(Car.tpl.rents.cell, {
+                            cost_display : dayItem.cost_display[1],
+                            current : current,
+                        })
+                        rent.row.min += simpleTpl(Car.tpl.rents.cell, {
+                            value : dayItem.min[1],
+                            current : current,
+                        })
+                    }
+                }
+                rents$ += simpleTpl(Car.tpl.rents.rent, rent);
+            }
+            return simpleTpl(Car.tpl.rents.main, {rents:rents$})
+        }
+    },
+
+    checkRents : function(car) {
+        for (var t=0; car.tariffs[t]; t++) {
+            var tariff = car.tariffs[t]
+            var isEmptyTariff = true
+            for (var r=0; tariff.items[r]; r++) {
+                var row = tariff.items[r]
+                var isEmptyRow = true
+                for (var d=0; tariff.days[d]; d++) {
+                    var day = tariff.days[d]
+                    if (!row.data[d].cost[1]) {
+                        row.data[d].cost.splice(1,1)
+                        row.data[d].min.splice(1,1)
+                        day.rate = null
+                    }
+                    if (row.data[d].cost[0] || (day.rate && row.data[d].cost[1])) {
+                        isEmptyRow = false
+                        isEmptyTariff = false
+                    }
+                }
+                if (isEmptyRow && tariff.items.length) {
+                    tariff.items.splice(r,1)
+                    r--
+                }
+            }
+            if (isEmptyTariff && car.tariffs.length) {
+                car.tariffs.splice(t,1)
+                t--
+            }
+        }
+        return car
+    },
+
+    prepare : function(data) {
+        data = cars.car.checkRents(data)
+
+        if (data.viewer_price_in_list) {
+            var viewerPrice = data.viewer_price_in_list
+
+            moment.locale(LOCALE)
+            var date = viewerPrice.date || undefined
+            var dateText = t('Price for {date}', {'{date}':moment(date).format('D MMMM')})
+
+            var cell = null
+            if (viewerPrice.tariff_prices) {
+                cell = {
+                    rate       : viewerPrice.tariff_rate,
+                    min        : viewerPrice.tariff_prices_min,
+                    prices_raw : viewerPrice.tariff_prices_raw,
+                    prices     : viewerPrice.tariff_prices,
+                }
+            } else {
+                if (viewerPrice.price && viewerPrice.price.tariff_id && viewerPrice.price.tariff_index !== null) {
+                    var tariff = data.tariffs.filter(function(tariff){
+                        return tariff.id == viewerPrice.price.tariff_id
+                    })[0]
+                    var tariffCell = tariff.items[0].data[viewerPrice.price.tariff_index]
+                    cell = {
+                        rate       : tariff.days[viewerPrice.price.tariff_index].rate,
+                        min        : tariffCell.min,
+                        prices_raw : tariffCell.cost,
+                        prices     : tariffCell.cost_display,
+                    }
+                } else if (viewerPrice.price.price_display) {
+                    cell = {
+                        rate       : null,
+                        min        : null,
+                        prices     : [viewerPrice.price.price_display],
+                        prices_raw : [viewerPrice.price.price],
+                    }
+                    if (data.params.param_time && data.params.param_time.value_text) {
+                        cell.min = [data.params.param_time.value + '+0']
+                    }
+                    dateText = null
+                }
+            }
+
+            if (cell !== null) {
+                data.mainPrice = {
+                    prices : null,
+                    date   : null,
+                    min    : null,
+                    rate   : cell.rate,
+                }
+
+                if (data.mainPrice.rate && !cell.prices_raw[1]) {
+                    data.mainPrice.rate = null
+                }
+
+                if (cell.min !== null) {
+                    data.mainPrice.min = cell.min.map(function(min) {
+                        min = min.split('+')
+                        var result = t('{n} hour|{n} hours', +min[0])
+                        if (+min[1]) {
+                            result += ' + ' + t('1 hour delivery')
+                        }
+                        return result
+                    })
+                }
+                if (cell.prices_raw[0]) {
+                    data.mainPrice.prices = [cell.prices[0]]
+                }
+                if (data.mainPrice.rate && cell.prices_raw[1] &&
+                    (cell.prices_raw[0] !== cell.prices_raw[1] || cell.min[0] !== cell.min[1]) ) {
+                    data.mainPrice.prices.push(cell.prices[1])
+                } else if (data.mainPrice.min[1]) {
+                    data.mainPrice.min.splice(1,1)
+                }
+                data.mainPrice.date = dateText
+            }
+        }
+        return data
+    },
+
+    showMedia: function($thumb) {
+        var Car = cars.car
+        if ($thumb.is('._cur')) {
+            return false
+        }
+        Car.$thumbs.filter('._cur').removeClass('_cur')
+        Car.$medias.filter('._cur').removeClass('_cur')
+
+        var $media = $(Car.$medias[$thumb.index()])
+        $media.addClass('_cur')
+        $thumb.addClass('_cur')
+    },
+
+    load : {
+        car : function(carId) {
+            return $.ajax({
+                type     : 'GET',
+                url      : API_URL + '/v2/cars/' + carId,
+                data     : {
+                    fields : 'params,text,tariffs,viewer_price_in_list,media',
+                    embed  : 'user',
+                    preview_size: '750x500x0,95x60x1,60x60x1'
+                },
+                dataType : 'json',
+                xhrFields: {
+                    withCredentials: true
+                }
+            })
+        },
+        seo : function(url) {
+            return $.ajax({
+                type     : 'GET',
+                url      : API_URL + '/v2/interface/titles',
+                data     : {
+                    url : url
+                },
+                dataType : 'json',
+                xhrFields: {
+                    withCredentials: true
+                }
+            })
+        }
+    },
+
+    switch : {
+        next: function() {
+            cars.car.switch.do(1)
+        },
+        prev: function() {
+            cars.car.switch.do(-1)
+        },
+        do: function(dir) {
+            var Car = cars.car
+            var carId = Car.list[Car.index+dir]
+            cars.car.show(carId)
+        }
+    },
+    events : {
+        click : function(ev) {
+            var $el = $(ev.target)
+            if ($el.is('[car-action="request"]')) {
+                cars.request.show(cars.car.info);
+            } else if ($el.is('[rent-action="toggle"]')) {
+                $el.closest('[rent-elem="main"]').toggleClass('_expanded');
+            } else if ($el.is('[gallery-action="media"]')) {
+                cars.car.showMedia($el)
+            } else if ($el.is('[gallery-action="video"]')) {
+                gallery.show($el.attr('media-id'), 'frompage')
+            } else if ($el.is('[car-action="contacts"]')) {
+                ppContacts.show({
+                    userId      : +$el.attr('cp-user'),
+                    contentId   : +$el.attr('cp-contentid'),
+                    contentType : $el.attr('cp-contenttype'),
+                    controller  : $el.attr('controller'),
+                }, $el, {objectName : cars.car.info.name})
+            }
+        }
+    },
+
+    preload : function(carId) {
+        var Car = cars.car
+        if (Car.cache[carId]) {
+            return new Promise(function(resolve, reject) {
+                resolve(true)
+            })
+        } else {
+            return new Promise(function(resolve, reject) {
+                var carInfo = {}
+                Car.load.car(carId)
+                .then(function(json) {
+                    carInfo = Car.prepare(json.car)
+                    return Car.load.seo(carInfo.url)
+                })
+                .then(function(json) {
+                    carInfo.seo = json;
+                    if (Car.$cache === null) {
+                        Car.$cache = simpleTpl(Car.tpl.cache, {}, true).appendTo($('body'))
+                    }
+                    Car.cache[carId] = {
+                        info     : carInfo,
+                        $content : Car.render.main(carInfo).appendTo(Car.$cache),
+                    }
+                    resolve(true)
+                })
+            })
+        }
+    },
+
+    get : function(carId) {
+        var Car = cars.car
+        if (Car.cache[carId]) {
+            return new Promise(function(resolve, reject) {
+                resolve(Car.cache[carId])
+            })
+        } else {
+            return new Promise(function(resolve, reject) {
+                Car.preload(carId)
+                .then(function(loaded) {
+                    resolve(Car.cache[carId])
+                })
+            })
+        }
+    },
+
+    show : function(carId, $page, mediaId) {
+        var Car = cars.car
+        var onPage = $page && $page.length
+        if (onPage && Car.$main !== null) {
+            return false
+        }
+
+        bigpreloader.show(onPage ? 'light' : null)
+
+        Car.get(carId).then(function(carInfo) {
+            Car.info = carInfo.info
+            if (Car.$main !== null) {
+                Car.$main.appendTo(Car.$cache)
+            }
+            Car.$main = carInfo.$content
+            Car.init(mediaId)
+            if ($page && $page.length) {
+                Car.$main.appendTo($page)
+            } else {
+                var prev = null
+                var next = null
+                if (cars.$list !== null) {
+                    var hasMore = (catalog.$more !== null) && !catalog.$more.hasClass('h')
+                    prev = (Car.index > 0) ? Car.switch.prev : null
+                    next = (Car.index < (Car.list.length-1) || hasMore) ? Car.switch.next : null
+                }
+                lightbox.show(Car.$main, 900, {
+                    close : Car.close,
+                    prev  : prev,
+                    next  : next,
+                }, {class:'ppCar'})
+            }
+            var $thumb = (mediaId) ? Car.$thumbs.filter('[media-id="' + mediaId + '"]') : $(Car.$thumbs[0])
+            Car.showMedia($thumb)
+            viewInfoStats.show('Car', Car.info.id, Car.$main)
+            bigpreloader.hide()
+        })
+    },
+
+    grabIds: function(_list) {
+        var Car = cars.car
+        if (!_list) {
+            var $cards = $('[car-elem="card"]')
+            if (!$cards.length) {
+                return false
+            }
+            for (var i=0; $cards[i]; i++) {
+                Car.list.push(+$($cards[i]).attr('car-id'))
+            }
+        } else {
+            for (var i=0; _list[i]; i++) {
+                Car.list.push(+_list[i].id)
+            }
+        }
+    },
+
+    init : function() {
+        var Car = cars.car
+        Car.$medias = Car.$main.find('[gallery-elem="media"]')
+        Car.$thumbs = Car.$main.find('[gallery-action="media"]')
+        Car.$main.on(Car.events)
+        if (Car.start.url == null) {
+            Car.start.url = document.location.href
+            Car.start.title = document.title
+            Car.grabIds();
+        }
+        if (cars.$list !== null) {
+            Car.index = Car.list.indexOf(Car.info.id)
+            for (var i=-2; i<4; i++) {
+                var index = Car.index + i
+                if (i === 0 || !Car.list[index]) {
+                    continue
+                }
+                Car.preload(Car.list[index])
+            }
+            if ( (Car.index >= Car.list.length-1) && (catalog.$more !== null) ) {
+                catalog.more(Car.grabIds)
+            }
+        }
+        history.pushState(null, null, Car.info.url)
+        ajaxHit(Car.info.url)
+        viewInfo({
+            contentType : 'Car',
+            contentId   : Car.info.id,
+            controller  : 'Car',
+            action      : 'show',
+        }, {
+            portfolio : 1,
+        })
+        document.title = Car.info.seo.title
+    }
+}
+/* 
+ * cars_request.js
+ */
+cars.request = {
+    $main : null,
+    $date : null,
+    $dateSelect : null,
+
+    info : null,
+    date : null,
+
+    text : {
+        dateSelect : {
+            select : t('Select date'),
+            change : t('Change'),
+        }
+    },
+    tpl : {
+        main :
+            '<form class="ppRequest ppCarRequest">' +
+                '<h1 class="ppRequest_caption lightbox_caption">' + t('Limo rental enquiry form') + '</h1>' +
+                '<div class="ppRequest_info">' +
+                    '<img class="ppRequest_photo" src="{{ media.0.preview_url.750x500x0 }}" alt="">' +
+                    '<p class="ppRequest_name">{{ name }}</p>' +
+                    '<p class="ppRequest_company">{{ user.name }}</p>' +
+                '</div>' +
+                '<div class="ppRequest_form">' +
+                    '<div class="ppRequest_field-date">' +
+                        t('Date') +
+                        ' <span class="ppRequest_date_text" request-elem="date">{{ dateText }}</span> ' +
+                        '<a class="ppRequest_date_select" request-action="date">{{ dateSelectText }}</a>' +
+                    '</div>' +
+                    '<input class="ppRequest_field-text" placeholder="' + t('Name') + '" type="text" value="" name="name" ff-empty="[ff]' + t('Name') + '[/ff]">' +
+                    '<input class="ppRequest_field-text" placeholder="' + t('E-mail') + '" type="text" value="" name="email" ff-empty="[ff]' + t('email') + '[/ff]">' +
+                    '<textarea class="ppRequest_field-area" name="description" rows="3" placeholder="' + t('Note') + '"></textarea>' +
+                    '<p class="ppRequest_field-checkbox">{{ emailCheckbox }}</p>' +
+                    '<p class="ppRequest_field-checkbox">' +
+                        '{{ phoneCheckbox }}' +
+                        '<input class="ppRequest_field-text" type="text" name="phone" value="">' +
+                    '</p>' +
+                '</div>' +
+                '<div class="ppRequest_ffText" ff-elem="text"></div>' +
+                '<div class="ppRequest_send">' +
+                    '<button class="button-big" ff-elem="button" type="button" request-action="send">' + t('Send') + '</button>' +
+                    '<span class="ppRequest_cancel"> или <a lightbox-action="close">' + t('Cancel') + '</a></span>' +
+                '</div>' +
+            '</form>',
+        step2 :
+            '<div class="ppRequest">' +
+                '<h1 class="ppRequest_caption lightbox_caption">' + t('Request sent') + '</h1>' +
+                '<button class="button" lightbox-action="close">' + t('Continue browsing limos') + '</button>' +
+            '</div>'
+    },
+
+    close : function() {
+        var Request = cars.request
+        Request.$main = null
+        Request.$date = null
+        Request.$dateSelect = null
+        Request.info = null
+        Request.date = null
+    },
+
+    render : {
+        step1 : function() {
+            var Request = cars.request
+            var tplParams = Request.info
+            if (Request.date) {
+                tplParams.dateText = moment(Request.date).format('LL')
+                tplParams.dateSelectText = Request.text.dateSelect.change
+            } else {
+                tplParams.dateSelectText = Request.text.dateSelect.select
+            }
+            tplParams.emailCheckbox = switcher.render({
+                type     : 'checkbox',
+                name     : 'send[]',
+                checked  : true,
+                disabled : true,
+                value    : 'email',
+                text     : t('Get the reply by email')
+            })
+            tplParams.phoneCheckbox = switcher.render({
+                type  : 'checkbox',
+                name  : 'send[]',
+                value : 'phone',
+                text  : t('Get the reply by phone')
+            })
+            return simpleTpl(Request.tpl.main, Request.info, true)
+        },
+        step2 : function() {
+            var Request = cars.request
+            Request.$main.remove()
+            Request.$main = simpleTpl(Request.tpl.step2, {}, true)
+            lightbox.show(Request.$main, 600, {close:Request.close})
+        }
+    },
+
+    pickDate : function(_dates) {
+        var Request = cars.request
+        Request.date = _dates.pop()
+        Request.$date.text(moment(Request.date).format('LL'))
+        Request.$dateSelect.text(Request.text.dateSelect.change)
+        calendar.close()
+    },
+
+    toggleCalendar : function(_$field) {
+        if (_$field.is('._calendarOwner')) {
+            calendar.close()
+        } else {
+            var Request = cars.request
+            calendar.init(_$field, {
+                interval : '+12',
+                type     : 'point',
+                dates    : Request.date ? [Request.date] : null,
+                single   : true,
+            },{
+                onPick : Request.pickDate
+            })
+        }
+    },
+
+    send : function() {
+        var Request = cars.request
+        var fields = Request.$main.serializeArray()
+        var data = {}
+        for (var i=0; fields[i]; i++) {
+            var field = fields[i]
+            data[field.name] = field.value
+        }
+        data['date'] = Request.date || null
+        $.ajax({
+            type     : 'POST',
+            url      : API_URL + '/v2/cars/' + Request.info.id + '/request',
+            data     : JSON.stringify(data),
+            dataType : 'json',
+            xhrFields: {
+                withCredentials: true
+            },
+            success  : function(json) {
+                Request.render.step2()
+            }
+        })
+    },
+
+    events : {
+        click : function(ev) {
+            var $el = $(ev.target)
+            if ($el.is('[request-action]')) {
+                var Request = cars.request
+                switch ($el.attr('request-action')) {
+                    case 'date' : Request.toggleCalendar($el.parent()); break;
+                    case 'send' : Request.send(); break;
+                }
+            }
+        }
+    },
+
+    show : function(_info, _date) {
+        var Request = cars.request
+        if (Request.$main !== null) {
+            return false
+        }
+        moment.locale(LOCALE)
+        Request.info = _info
+        Request.date = _date
+        Request.$main = Request.render.step1()
+        Request.$date = Request.$main.find('[request-elem="date"]')
+        Request.$dateSelect = Request.$main.find('[request-action="date"]')
+        lightbox.show(Request.$main, 870, {close:Request.close})
+        Request.init()
+    },
+
+    init : function() {
+        var Request = cars.request
+        Request.$main.on(Request.events)
+        fillFields.init(Request.$main)
+    }
+}
+
+/* 
+ * catalog.js
+ */
+var catalog = {
+    car       : null,
+    carrental : null,
+    dress     : null,
+    edit      : null,
+    lazy      : null,
+    shop      : null,
+    ringshop  : null,
+    user      : null,
+    venue     : null,
+
+    $main     : null,
+    $more     : null,
+    $cards    : null,
+
+    module  : null,
+    page    : 1,
+    seed    : '',
+    perPage : 20,
+    type    : {
+        model  : '',
+        entity : 0,
+    },
+    list    : [],
+    indexes : {},
+
+    languageId : 0,
+    channel : '',
+    test : '',
+    explainRating : 0,
+
+    fields : null,
+
+    tpl : {
+        map : Twig.twig({data:
+            '<div class="ppContacts">' +
+                '<p class="ppContacts_name">{{ name }}</p>' +
+                '<div map-elem="main" class="ppContacts_map"></div>' +
+            '</div>'
+        }),
+        empty : '<div class="placeList"><p class="placeList_nofound">' + t('Unfortunately, there\'s no data found based on this criteria') + '</p></div>',
+    },
+
+    events : {
+        click : function(ev){
+            var $el = $(ev.target);
+
+            if ($el.is('[catalog-action="edit"]')) {
+                catalog.edit.toggle(true);
+            } else if ($el.is('[catalog-action="more"]:not(._disabled)')) {
+                catalog.more()
+            } else if ($el.closest('[catalog-action="showmap"]').length) {
+                var $elem = $el.closest('[catalog-action="showmap"]')
+                catalog.showOnMap({
+                    name    : $elem.attr('data-name'),
+                    address : $elem.attr('data-address'),
+                    coords  : [$elem.attr('data-latitude'), $elem.attr('data-longitude')],
+                    opened  : true,
+                    url     : $elem.attr('data-url') || null,
+                })
+            } else if ($el.is('[catalog-action="set_weddate"]')) {
+                catalog.toggleCalendar($el)
+            }
+        }
+    },
+
+    windowEvents : {
+        scroll : function(ev){
+            var $el = $(ev.target)
+            if (!catalog.lazy.list.length) {
+                return true
+            }
+            catalog.lazy.check()
+        }
+    },
+
+    init : function() {
+        catalog.$main = $('#catalog')
+        if (!catalog.$main.length) {
+            catalog.$main = null
+            return false
+        }
+
+        catalog.perPage = +catalog.$main.attr('catalog-per_page')
+        catalog.seed = catalog.$main.attr('catalog-seed')
+        catalog.type.model = catalog.$main.attr('catalog-type')
+        catalog.type.entity = catalog.$main.attr('catalog-entity_type') || 0
+        catalog.languageId = catalog.$main.attr('catalog-languageId') || 0
+        catalog.channel = catalog.$main.attr('catalog-channel') || ''
+        catalog.test = catalog.$main.attr('catalog-test') || ''
+        catalog.explainRating = catalog.$main.attr('catalog-explainRating') || 0
+        catalog.explainRating = +catalog.explainRating
+
+        catalog.$cards    = catalog.$main.find('[catalog-elem="cards"]')
+        catalog.$more     = catalog.$main.find('[catalog-action="more"]')
+
+        if (catalog.type.model) {
+            var modelType = catalog.type.model.toLowerCase()
+            switch (modelType) {
+                case 'users' :
+                    catalog.module = catalog.user
+                    break
+                case 'restaurant' :
+                case 'venue' :
+                    catalog.module = catalog.venue
+                    break
+                default :
+                    catalog.module = catalog[modelType]
+                    break
+            }
+        }
+
+        catalog.$main.on(catalog.events)
+        $(window).on(catalog.windowEvents)
+
+        if (catalog.module && catalog.module.init) {
+            catalog.module.init()
+        }
+        var $cardList = catalog.$cards.find('[card-elem="main"]')
+        if ($cardList.length) {
+            catalog.list = []
+            var cardTop = catalog.$cards.offset().top + catalog.$cards.height()
+            $cardList.each(function(i, $card) {
+                $card = $($card)
+                var card = {
+                    id : +$card.attr('card-id'),
+                }
+                var isLazy = i > 5
+                catalog.indexes[card.id] = catalog.list.push({
+                    $card  : $card,
+                    card   : card,
+                    isLazy : isLazy,
+                }) - 1
+                catalog.lazy.add(cardTop, card.id)
+                cardTop = $card.offset().top + $card.height()
+            })
+        }
+    },
+
+    getSchedules : function($button) {
+        return new Promise(function(resolve, reject) {
+            var schedule = {}
+            if (catalog.module.getSchedules) {
+                $button.addClass('_loading')
+                schedule = catalog.module.getSchedules($button.attr('object-id')).then(function(schedule) {
+                    $button.removeClass('_loading')
+                    resolve(schedule)
+                })
+            } else {
+                var dates = $button.attr('busy-dates')
+                if (dates) {
+                    dates = dates.split(',')
+                    var date = new Date()
+                    date.setHours(0,0,0,0)
+                    var lastDate = new Date(date.getFullYear()+1, date.getMonth(), date.getDate())
+                    for (date; date<=lastDate; date.setDate(date.getDate() + 1)) {
+                        var day = date.getFullYear() + '-' + ('0' + (date.getMonth()+1)).slice(-2) + '-' + ('0' + date.getDate()).slice(-2)
+                        var status = dates.indexOf(day)>=0 ? 3 : 0
+                        schedule[day] = {
+                            status : status,
+                            title  : status ? t('Not available') : t('Available'),
+                        }
+                    }
+                }
+                resolve(schedule)
+            }
+        })
+    },
+
+    toggleCalendar : function($button, show) {
+        if (show !== false && show !== true) {
+            show = !$button.hasClass('_calendarOwner')
+        }
+        if (show) {
+            if ($button.hasClass('_loading')) {
+                return
+            }
+            catalog.getSchedules($button).then(function(schedule) {
+                var filter = filters.list.getBy('label', 'date')
+                if (filter !== null) {
+                    var params = {
+                        interval : '+12',
+                        type     : 'point',
+                        schedule : schedule,
+                        single   : true,
+                    }
+                    var callbacks = {
+                        onPick : function(date) {
+                            catalog.setFields({
+                                first_id : +$button.attr('object-id'),
+                            })
+                            filter.onPick(date)
+                        },
+                    }
+                    if (catalog.module.calendar) {
+                        if (catalog.module.calendar.params) {
+                            params = Object.assign(params, catalog.module.calendar.params)
+                        }
+                        if (catalog.module.calendar.balloon) {
+                            callbacks.balloon = catalog.module.calendar.balloon
+                        }
+                    }
+                    calendar.init($button, params, callbacks)
+                }
+            })
+        } else {
+            calendar.close()
+        }
+    },
+
+    more : function(callback) {
+        catalog.show(catalog.page + 1, callback)
+    },
+
+    checkMoreButton : function(meta) {
+        if (meta.page >= meta.pages_count) {
+            catalog.$more.addClass('h')
+        } else {
+            if (catalog.$more.is('.h')) {
+                catalog.$more.removeClass('h')
+            }
+            var moreCount = Math.min(meta.total_count - meta.page * meta.per_page, meta.per_page);
+            catalog.$more.text(t('Show {cnt} more', {'{cnt}': moreCount}))
+        }
+    },
+
+    setFields : function(fields) {
+        catalog.fields = fields
+    },
+
+    load : function(page) {
+        var ajaxParams = catalog.module.ajaxParams()
+        ajaxParams.data = Object.assign(ajaxParams.data, {
+            page     : catalog.page,
+            per_page : catalog.perPage,
+            city_id  : CITY_ID,
+            seed     : catalog.seed,
+        })
+
+        if (!USER.isGuest && USER.group == 'admin') {
+            if (!ajaxParams.data.embed) {
+                ajaxParams.data.embed = []
+            }
+            ajaxParams.data.embed.push('user.moderated')
+        }
+        if (ajaxParams.data.embed && ajaxParams.data.embed.length) {
+            ajaxParams.data.embed = ajaxParams.data.embed.join(',')
+        }
+        if (ajaxParams.data.fields && ajaxParams.data.fields.length) {
+            ajaxParams.data.fields = ajaxParams.data.fields.join(',')
+        }
+        if (catalog.fields) {
+            for (var field in catalog.fields) if (catalog.fields.hasOwnProperty(field)) {
+                ajaxParams.data[field] = catalog.fields[field]
+            }
+            catalog.fields = null
+        }
+        var date = null
+        for (var i=0; filters.list[i]; i++) {
+            var filter = filters.list[i]
+            if (filter.label == 'date') {
+                if (moment(filter.result[0]) >= moment()) {
+                    ajaxParams.data.date = filter.result[0]
+                }
+                break
+            }
+        }
+        if (!ajaxParams.data.date) {
+            ajaxParams.url = ajaxParams.url.replace(/date=([0-9\-]*)/, '')
+        }
+        preloading.set(catalog.$cards)
+        return $.ajax({
+            type      : 'GET',
+            url       : ajaxParams.url,
+            data      : ajaxParams.data,
+            xhrFields : {
+                withCredentials: true,
+            },
+            dataType : 'json',
+        })
+    },
+
+    show : function(page, callback) {
+        catalog.page = page
+        if (catalog.page === 1) {
+            catalog.loadSeo()
+        }
+
+        catalog.$more.addClass('_disabled')
+        var load = typeof catalog.module.load === 'function' ? catalog.module.load : catalog.load
+        load(page).then(function(json) {
+            preloading.remove(catalog.$cards)
+            catalog.$more.removeClass('_disabled')
+            var cards = json[catalog.module.jsonField]
+            var meta = json.meta
+            if (catalog.page === 1) {
+                catalog.list = []
+                catalog.indexes = {}
+                catalog.$cards.empty()
+                $(window).scrollTop(catalog.$main.offset().top)
+            }
+            if (meta.total_count) {
+                var lazyBorders = catalog.lazy.borders()
+                var cardTop = catalog.$cards.offset().top + catalog.$cards.height()
+                for (var i=0; cards[i]; i++) {
+                    var isLazy = cardTop < lazyBorders.vtop || cardTop > lazyBorders.bottom
+                    if (isLazy) {
+                        catalog.lazy.add(cardTop, cards[i].id)
+                    }
+                    if (catalog.type.model === 'dress') {
+                        var renderFav = fav.render({
+                            type: cards[i].model_id ? 'dressmodel' : 'shopdress',
+                            id: cards[i].model_id ? cards[i].model_id : cards[i].id,
+                        })
+                    } else {
+                        renderFav = fav.render({
+                            type: catalog.type.model == 'ringshop' ? 'shop' : catalog.type.model,
+                            id: cards[i].id,
+                        })
+                    }
+                    var data = {
+                        id   : cards[i].id,
+                        card : cards[i],
+                        fav  : renderFav,
+                        weddingDate : meta.weddingDate_current || null,
+                        isLazy : isLazy,
+                        isBlogTop: SITE_DOMAIN==='gorko.ru'
+                    }
+                    if (catalog.module.prepare) {
+                        data = catalog.module.prepare(data)
+                    }
+                    data.$card = catalog.module.render(data)
+                    data.$card.appendTo(catalog.$cards)
+                    cardTop = data.$card.offset().top + data.$card.height()
+                    catalog.indexes[data.id] = catalog.list.push(data) - 1
+                }
+                if (catalog.module.afterRender) {
+                    catalog.module.afterRender()
+                }
+            } else {
+                catalog.$cards.html(catalog.tpl.empty)
+            }
+
+            catalog.checkMoreButton(meta)
+
+            if (callback) {
+                callback(cards)
+            }
+        })
+    },
+
+    showOnMap : function(point) {
+        var $map = $(catalog.tpl.map.render({name:point.name}))
+        lightbox.show($map, 700)
+        gorkoMap.init($map.find('[map-elem="main"]'), [point])
+    },
+
+    loadSeo : function() {
+        $.ajax({
+            url      : API_URL + '/v2/interface/titles',
+            data     : {
+                url : document.location.href,
+            },
+            dataType : 'json',
+            xhrFields: {
+                withCredentials: true
+            },
+            success  : function(seo) {
+                if (seo.title) {
+                    document.title = seo.title
+                }
+                if (seo.h1) {
+                    var $h1 = $('h1')
+                    if ($h1.length) {
+                        $h1.text(seo.h1)
+                    }
+                }
+                var $seoBottom = $('#nopuse')
+                if ($seoBottom.length) {
+                    $seoBottom.html(seo.bottom)
+                    if (seo.bottom) {
+                        $seoBottom.removeClass('h')
+                    } else {
+                        $seoBottom.addClass('h')
+                    }
+                }
+                var $underH1 = $('#under_h1')
+                if ($underH1.length) {
+                    $underH1.html(seo.h1text)
+                    if (seo.h1text) {
+                        $underH1.removeClass('h')
+                    } else {
+                        $underH1.addClass('h')
+                    }
+                }
+            }
+        })
+    },
+}
+
+/* 
+ * catalog_car.js
+ */
+catalog.car = {
+    tpl : Twig.twig({data:
+        '<div class="carCard{{ card.top ? "-top" }}" car-id="{{ card.id }}" car-elem="card">' +
+            '<div class="carCard_head">' +
+                '{{ fav }}' +
+                '{{ link }}' +
+            '</div>' +
+            '<div class="carCard_body">' +
+                '{% if onDate %}' +
+                    '<p class="carCard_freeDate">{{ onDate }}</p>' +
+                '{% endif %}' +
+                '<div class="carCard_covers">' +
+                    '<a class="carCard_cover" href="{{ card.url }}" target="_blank" car-action="show" car-media="{{ card.catalog.exterior_cover_id }}"><img class="carCard_img" src="{{ card.catalog.exterior_cover }}" width="300" height="180" alt=""></a>' +
+                    '<a class="carCard_cover" href="{{ card.url }}" target="_blank" car-action="show" car-media="{{ card.catalog.interior_cover_id }}"><img class="carCard_img" src="{{ card.catalog.interior_cover }}" width="300" height="180" alt=""></a>' +
+                '</div>' +
+                '<div class="carCard_prices" catalog-elem="param_price">' +
+                    '{% for price in prices %}' +
+                        '<div class="carCard_price">' +
+                            '{{ price.cost }}' +
+                            '{% if price.hint %}' +
+                                '<div class="hint-icon">' +
+                                    '<div class="hint_bubble">{{ price.hint }}</div>' +
+                                '</div>' +
+                            '{% endif %}' +
+                            '{% if price.rateText %}' +
+                                '<span class="carCard_rateTime">{{ price.rateText }}</span>' +
+                            '{% endif %}' +
+                            '{% if price.minText %}' +
+                                '<p class="carCard_min">' + t('Min. time') + ': {{ price.minText }}</p>' +
+                            '{% endif %}' +
+                        '</div>' +
+                    '{% endfor %}' +
+                    '<p class="carCard_driver">{{ driverText }}</p>' +
+                '</div>' +
+                '<div class="carCard_params">' +
+                    '{% for param in params %}' +
+                        '<div class="carCard_param-{{ param.css_class }}">' +
+                            '{% if param.value_shortText %}' +
+                                '{{ param.value_shortText }}' +
+                            '{% else %}' +
+                                '{{ param.value_text }}' +
+                            '{% endif %}' +
+                        '</div>' +
+                    '{% endfor %}' +
+                '</div>' +
+            '</div>' +
+        '</div>'
+    }),
+
+    jsonField : 'cars',
+    params : ['length', 'capacity', 'year'],
+
+    render : function(card) {
+        return $(catalog.car.tpl.render(card))
+    },
+
+    prepare : function(data) {
+        var car = data.card
+        var module = catalog.car
+
+        data.link = car.link.replace('<a', '<a class="carCard_name" car-action="show"')
+        if (car.params) {
+            data.params = []
+            for (var i=0; module.params[i]; i++) {
+                var param = car.params['param_' + module.params[i]]
+                if (!param) {
+                    continue
+                }
+                if (param.value && param.css_class) {
+                    data.params.push(param)
+                }
+            }
+            if (car.params.param_driver && car.params.param_driver.value !== null) {
+                data.driverText = car.params.param_driver.value_text
+            }
+        }
+
+        data.prices = []
+        var priceInfo = car.viewer_price_in_list
+        if (priceInfo.date) {
+            data.onDate = t('Price for {date}', {'{date}': '<b>' + moment(priceInfo.date).format('L') + '</b>'})
+        }
+        var hint = priceInfo.price.log != "by_wedding_date" ? t('This is minimum price. The actual price depends on the season, the day of the week and rental period.') : null
+
+        var rate = priceInfo.tariff_rate
+        if (rate && !priceInfo.tariff_prices_raw[1]) {
+            rate = null
+        }
+        if (priceInfo.tariff_prices) {
+            if (priceInfo.tariff_prices_raw[0]) {
+                var min = priceInfo.tariff_prices_min[0].split('+')
+                var minText = +min[1] ? t('{hour}+1 h.', {'{hour}':min[0]}) : t('{hour} h.', {'{hour}':min[0]})
+                data.prices.push({
+                    cost     : priceInfo.tariff_prices[0],
+                    rateText : rate ? t('before {time}', {'{time}':rate}) : null,
+                    minText  : minText,
+                    hint     : hint,
+                })
+            }
+            if (rate && priceInfo.tariff_prices.length === 2 && priceInfo.tariff_prices_raw[1]) {
+                var min = priceInfo.tariff_prices_min[1].split('+')
+                var minText = +min[1] ? t('{hour}+1 h.', {'{hour}':min[0]}) : t('{hour} h.', {'{hour}':min[0]})
+                data.prices.push({
+                    cost     : priceInfo.tariff_prices[1],
+                    rateText : rate ? t('from {time}', {'{time}':rate}) : null,
+                    minText  : minText,
+                    hint     : hint,
+                })
+            }
+        } else if (priceInfo.price && priceInfo.price.price_display) {
+            data.prices.push({
+                cost     : priceInfo.price.price_display,
+                rateText : null,
+                minText  : car.params.param_time ? t('{hour} h.', {'{hour}':car.params.param_time.value})  : null,
+                hint     : hint,
+            })
+            data.onDate = null
+        }
+
+        return data
+    },
+
+    ajaxParams : function () {
+        var result = {
+            url  : API_URL + '/v2/directory/cars/' + filters.generateQueryString(),
+            data : {
+                fields     : ['params','catalog','driver','link','viewer_price_in_list'],
+                cover_size : '300x180x1',
+            }
+        }
+        if (catalog.type.entity != undefined) {
+            result.data.type_id = catalog.type.entity
+        }
+        return result
+    },
+}
+/* 
+ * catalog_carrental.js
+ */
+catalog.carrental = {
+    tpl : Twig.twig({data:
+        '<div class="carrentalCard{{ card.top ? "-top" }}">' +
+            '<div class="carrentalCard_head">' +
+                '{{ fav }}' +
+                '<a class="carrentalCard_name" href="{{ card.profile_url }}">{{ card.name }}</a>' +
+            '</div>' +
+            '<div class="carrentalCard_cars">' +
+                '{% for car in cars if (loop.index <= 4) %}' +
+                    '<a href="{{ car.url }}" class="carrentalCard_car"><img class="carrentalCard_cover" src="{{ car.cover_url }}" alt=""></a>' +
+                '{% endfor %}' +
+            '</div>' +
+            '<div class="carrentalCard_bottom">' +
+            '<a href="{{ url }}" class="carrentalCard_allCars">{{ moreText }}</a>' +
+        '</div>',
+    }),
+
+    jsonField : 'users',
+
+    render : function(card) {
+        return $(catalog.carrental.tpl.render(card))
+    },
+
+    prepare : function(data) {
+        var user = data.card
+
+        if (user.cars_auto) {
+            data.cars = user.cars_auto
+            data.moreText = t('View all vehicles – {count}', {'{count}':data.cars.length})
+        } else {
+            data.cars = user.cars_limousine
+            data.moreText = t('View all limos – {count}', {'{count}':data.cars.length})
+        }
+        return data
+    },
+
+    ajaxParams : function () {
+        var result = {
+            url  : API_URL + '/v2/directory/users/',
+            data : {
+                order      : 'catalog',
+                cover_size : '190x190x1',
+            }
+        }
+        if (catalog.type.entity != undefined) {
+            result.data.type_id = catalog.type.entity
+            result.data.role_id = catalog.type.entity
+        }
+        var carsType = window.location.search.match(/type=(.*)/)
+        if (carsType) {
+            result.data.cars_type = carsType[1]
+            result.data.embed = ['cars_' + result.data.cars_type]
+        }
+
+        return result
+    },
+}
+/* 
+ * catalog_dress.js
+ */
+catalog.dress = {
+    tpl : Twig.twig({data:
+        '<div class="dressCard" dress-elem="card" dress-id="{{ card.id }}">' +
+            '{{ fav }}' +
+            '{% if card.photos.0 %}' +
+                '<a href="{{ card.url }}" dress-action="show">' +
+                    '<img src="{{ card.photos.0 }}" alt="" class="dressCard_media" width="252" height="{{ card.photo_sizes.0.1 }}">' +
+                '</a>' +
+            '{% endif %}' +
+            '<div class="dressCard_info">' +
+                '{% if inSalon %}' +
+                    '{% if card.price and card.price.value %}<p class="dressCard_price">{{ card.price.value_display }}</p>{% endif %}' +
+                '{% elseif priceDisplay %}' +
+                    '<p class="dressCard_price">' +
+                        '{{ priceDisplay }}' +
+                        '{% if salonsCount %}' +
+                            '<span class="dressCard_salons">({{ salonsCount }})</span>' +
+                        '{% endif %}' +
+                    '</p>' +
+                '{% endif %}' +
+                '<p class="dressCard_name">{{ dressName }}</p>' +
+                '{% if card.text %}' +
+                    '<div class="dressCard_description">{{ card.text }}</div>' +
+                '{% endif %}' +
+                '{% if card.brand and card.brand.logo_url %}{{ card.brand.logo_url }}{% endif %}{# todo img #}' +
+            '</div>' +
+        '</div>'
+    }),
+
+    jsonField : 'dresses',
+
+    render : function(card) {
+        return $(catalog.dress.tpl.render(card))
+    },
+
+    prepare : function(data) {
+        var dress = data.card
+        if (dress.salons.best && dress.salons.best.price && dress.salons.best.price.value) {
+            if (dress.salons.list.length > 1 && dress.salons.best.price.value > 0) {
+                data.priceDisplay = t('from {price}', {'{price}': dress.salons.best.price.value_display})
+            } else {
+                data.priceDisplay = dress.salons.best.price.value_display
+            }
+        }
+        data.salonsCount = t('{n} salon|{n} salons', dress.salons.list.length)
+        data.dressName = t('{dress_name} by {dress_brand}', {'{dress_name}': dress.name, '{dress_brand}': dress.brand_name})
+        dress.photo_sizes = dress.photo_sizes.map(function(size) {
+            return size.split('x')
+        })
+        return data
+    },
+
+    ajaxParams : function () {
+        var result = {
+            url  : API_URL + '/v2/dresses/' + window.location.search,
+            data : {
+                preview_size : '252x0x0',
+            }
+        }
+        return result
+    },
+
+    afterRender: function() {
+        if (catalog.page == 1) {
+            dresses.createColumns()
+        }
+        setTimeout(dresses.sort, 100)
+    },
+}
+
+/* 
+ * catalog_edit.js
+ */
+catalog.edit = {
+    $main : false,
+
+    toggle : function(show) {
+        var editor = catalog.edit
+        if (editor.$main === false) {
+            editor.init()
+        }
+
+        editor.$main.toggleClass('_edit', show)
+
+        if (show == true) {
+            place.edit.init()
+        }
+    },
+
+    init : function() {
+        var editor = catalog.edit
+        editor.$main = catalog.$main.find('[catalog-elem="edit"]')
+        if (!editor.$main.length) {
+            editor.$main = false
+            return false
+        }
+
+        editor.$main.on({
+            click : function(ev){
+                var $el = $(ev.target)
+                if ($el.is('[catalogedit-action="cancel"]')) {
+                    editor.toggle(false)
+                }
+            }
+        })
+    }
+}
+
+
+/* 
+ * catalog_lazy.js
+ */
+catalog.lazy = {
+    tpl : twig.compile(
+        '<img src="{{ src }}"{% if width %} width="{{ width }}"{% endif %}{% if height %} height="{{ height }}"{% endif %} alt="">'
+    ),
+
+    list : [],
+
+    add : function(top, id) {
+        catalog.lazy.list.push({
+            top : top,
+            id  : id,
+        })
+    },
+
+    borders : function() {
+        var windowTop = $(window).scrollTop()
+        var windowHeight = $(window).height()
+        return {
+            vtop    : windowTop - windowHeight,
+            vbottom : windowTop + windowHeight,
+            bottom  : windowTop + windowHeight * 3,
+        }
+    },
+
+    loadImages : function(cardId, count) {
+        var card = catalog.list[catalog.indexes[cardId]]
+        var $images = card.$card.find('[catalog-lazy="image"]')
+        count = count || $images.length
+        if (!count) {
+            return 0
+        }
+        for (var i=0; i<count && $images[i]; i++) {
+            $image = $($images[i])
+            twig.render(catalog.lazy.tpl, {
+                src    : $image.attr('data-src'),
+                width  : $image.width() || null,
+                height : $image.height() || null,
+            }, true).insertBefore($image)
+            $image.remove()
+        }
+        if (catalog.module.initCard) {
+            waitImages(card.$card, function() {
+                catalog.module.initCard(card.$card)
+            })
+        }
+        return count
+    },
+
+    check : function() {
+        var Lazy = catalog.lazy
+        var windowTop = $(window).scrollTop()
+        var borders = Lazy.borders()
+        for (var i=0; Lazy.list[i]; i++) {
+            var cardInfo = Lazy.list[i]
+            if (!catalog.indexes[cardInfo.id] || !catalog.list[catalog.indexes[cardInfo.id]]) {
+                Lazy.list.splice(i, 1)
+                i--
+                continue
+            }
+            if (cardInfo.top >= borders.vtop) {
+                if (cardInfo.top <= borders.vbottom) {
+                    Lazy.loadImages(cardInfo.id)
+                    Lazy.list.splice(i, 1)
+                    i--
+                } else if (cardInfo.top <= borders.bottom && !cardInfo.loaded) {
+                    cardInfo.loaded = Lazy.loadImages(cardInfo.id, 5)
+                    if (cardInfo.loaded < 5) {
+                        Lazy.list.splice(i, 1)
+                        i--
+                    }
+                }
+            }
+        }
+    },
+}
+/* 
+ * catalog_ringshop.js
+ */
+catalog.ringshop = {
+    num : 0,
+    tpl : Twig.twig({data:
+        '<div class="catalog_item{% if card.top %} bill_pro{% endif %}">' +
+            '{{ fav }}' +
+            //'<a class="fav" fav-action="toggle" model-name="shop" model-id="{{ card.id }}"></a>' +
+            '<a href="{{ card.url }}" target="_blank"><img class="catalog_item_img" src="{{ card.logo_url }}"></a>' +
+            '<div class="catalog_item_bottom">' +
+                '<div class="catalog_number">{{ num }}</div>' +
+                '<div class="catalog_item_bottom_field">' +
+                    '<a class="catalog_item_bottom_link" href="{{ card.url }}">{{ card.name }}</a>' +
+                '</div>' +
+            '</div>' +
+        '</div>'
+    }),
+
+    jsonField : 'shops',
+
+    init : function() {
+        catalog.ringshop.num = catalog.$cards.children().length
+    },
+
+    render : function(card) {
+        return $(catalog.ringshop.tpl.render(card))
+    },
+
+    prepare : function(data, num) {
+        var shop = data.card
+        data.num = catalog.ringshop.num + catalog.list.length+1
+        return data
+    },
+
+    ajaxParams : function () {
+        var result = {
+            url  : API_URL + '/v2/directory/shops/',
+            data : {
+                type_id      : 2,
+                fields       : ['logo_url'],
+                cover_size   : '250x250x1',
+                order        : 'catalog',
+            }
+        }
+
+        return result
+    },
+}
+/* 
+ * catalog_shop.js
+ */
+catalog.shop = {
+    tpl : Twig.twig({data:
+        '<div class="shopCard{% if card.top %}-top{% endif %}" data-number="{{ num }}">' +
+            '<a class="fav" fav-action="toggle" model-name="shop" model-id="{{ card.id }}"></a>' +
+            '<div class="shopCard_info">' +
+                '<p class="shopCard_name">' +
+                    '<a href="{{ card.url }}" target="_blank">{{ card.name }}</a>' +
+                '</p>' +
+                '{% if address %}' +
+                    '<p class="shopCard_address">{{ address }}</p>' +
+                '{% endif %}' +
+                '{% if card.logo_id %}' +
+                    '<a href="{{ card.url }}" target="_blank">' +
+                        '<img class="shopCard_logo" src="{{ card.logo_url }}">' +
+                    '</a>' +
+                '{% endif %}' +
+            '</div>' +
+            '{% if card.dresses and card.dresses.meta and card.dresses.meta.total_count %}' +
+                '{% for dress in card.dresses.dresses %}' +
+                    '{% if dress.photos[0] %}' +
+                        '<a href="{{ dress.url }}" target="_blank"><img class="shopCard_media" src="{{ dress.photos[0] }}" width="175" height="260"></a>' +
+                    '{% endif %}' +
+                '{% endfor %}' +
+                '<div class="card_footer"><a href="{{ card.url }}dress/">{{ card.countDressText }}</a></div>' +
+            '{% else %}' +
+                '{% for i,media in card.media if i < 3 %}' +
+                    '<a href="{{ media.url }}" target="_blank">' +
+                        '<img class="shopCard_media" src="{{ media.preview_url }}" width="175" height="260">' +
+                    '</a>' +
+                '{% endfor %}' +
+            '{% endif %}' +
+        '</div>',
+    }),
+
+    jsonField : 'shops',
+
+    render : function(card) {
+        if ((card.card.dresses && card.card.dresses.meta && card.card.dresses.meta.total_count) || card.card.media.length>=3) {
+            card.card.countDressText = card.card.dresses && card.card.dresses.meta && card.card.dresses.meta.total_count ? t('Show {n} dress|Show all {n} dresses', card.card.dresses.meta.total_count) : ''
+        }
+        return $(catalog.shop.tpl.render(card))
+    },
+
+    ajaxParams : function () {
+        var result = {
+            url  : API_URL + '/v2/directory/shops/',
+            data : {
+                type_id      : 1,
+                fields       : ['media', 'dresses', 'logo_url'],
+                embed        : ['branches'],
+                preview_size : '175x260x1',
+                cover_size   : '120x120x0',
+                media_limit  : 3,
+                order        : 'catalog',
+            }
+        }
+
+        return result
+    },
+}
+/* 
+ * catalog_user.js
+ */
+catalog.user = {
+    tpl : Twig.twig({data:
+        '<div class="userCard{{ card.top ? "-pro" }}" user-elem="main" card-elem="main" card-id="{{ card.id }}">' +
+            '<div class="userCard_head">' +
+                '{{ fav }}' +
+                '{{ avatar }}' +
+                '<div class="userCard_name">' +
+                    '<a target="_blank" href="{{ card.spec_url }}">{{ card.name }}</a>' +
+                    '{% if card.top %}' +
+                        '<div class="card_badge-pro" text="PRO">' +
+                            '{% if isBlogTop %}' +
+                                '<div class="balloon-dark">' +
+                                    '<a class="color_white" href="https://www.gorko.ru/blog/#7" target="_blank">' + t('PRO accounts in details') + '</a>' +
+                                '</div>' +
+                            '{% endif %}' +
+                        '</div>' +
+                    '{% endif %}' +
+                    '{% if hasTopContest %}' +
+                        '<div class="card_badge-top" text="' + t('TOP') + '" top_hint-action="show" user-id="{{ card.id }}">' +
+                        '</div>' +
+                    '{% endif %}' +
+                '</div>' +
+                '{% if card.is_company == 0 and card.company %}' +
+                    '<p class="userCard_company">{{ card.company }}</p>' +
+                '{% endif %}' +
+                '{% if reviewsCount %}' +
+                    '<p class="userCard_reviews">' +
+                        '<a class="userCard_reviews_link" href="{{ card.profile_url }}rating/" target="_blank">{{ reviewsCount }}</a>' +
+                    '</p>' +
+                '{% endif %}' +
+            '</div>' +
+            '<div class="userCard_medias" card-elem="gallery">' +
+                '{% for i,media in card.catalog_media if (i < 10) %}' +
+                    '<a class="userCard_media{% if media.type == "video_embed" %}-video{% endif %}" href="{{ media.url }}" target="_blank"{% if media.durationText %} media-duration="{{ media.durationText }}"{% endif %}>' +
+                        '{% if isLazy %}' +
+                            '<span class="media-dummy" catalog-lazy="image" data-src="{{ media.preview_url }}" style="display:inline-block;width:{{ media.size.width }}px;height:{{ media.size.height }}px">' +
+                        '{% else %}' +
+                            '<img src="{{ media.preview_url }}"{% if media.size.width %} width="{{ media.size.width }}"{% endif %}{% if media.size.height %} height="{{ media.size.height }}"{% endif %} alt="">' +
+                        '{% endif %}' +
+                    '</a>' +
+                '{% endfor %}' +
+            '</div>' +
+
+            '{% if card.dates %}' +
+                '{% if card.freeDate %}' +
+                    '<div class="card_freedate-{{ card.freeDate.status }}">{{ card.freeDate.text }}</div>' +
+                '{% else %}' +
+                    '<div class="userCard_schedule">' +
+                        t('Check out prices and availability on your date') +
+                        '<span class="fake_link userCard_weddate" catalog-action="set_weddate" object-id="{{ card.id }}" busy-dates="{{ card.dates|join(\',\') }}">' + t('Select date') + '</span>' +
+                    '</div>' +
+                '{% endif %}' +
+            '{% endif %}' +
+
+            '<div class="userCard_schedule h">' +
+                t('Check out prices and availability on your date') +
+                '<span class="fake_link userCard_weddate" catalog-action="set_weddate" object-id="{{ card.id }}">' +
+                    t('Select date') +
+                '</span>' +
+            '</div>' +
+            '<div class="userCard_prices">' +
+                '{% for i,price in card.catalog_prices if (i < 3) %}' +
+                    '<div class="userCard_price">' +
+                        '<p class="userCard_price_title">{{ price.title }}</p>' +
+                        '<p class="userCard_price_value">{{ price.value_display }}</p>' +
+                    '</div>' +
+                '{% endfor %}' +
+            '</div>' +
+        '</div>'
+    }),
+
+    jsonField : 'users',
+
+    init : function() {
+        catalog.user.afterRender()
+    },
+
+    render : function(card) {
+        return $(catalog.user.tpl.render(card))
+    },
+
+    prepare : function(data) {
+        var user = data.card
+
+        user.catalog_media.map(function(media) {
+            if (media.type == 'video_embed') {
+                if (media.video_duration) {
+                    media.durationText = Math.floor(media.video_duration / 60) + ':' + (media.video_duration % 60).padLeft()
+                }
+            }
+            if ( (typeof media.preview_size).toLowerCase() == 'string' ) {
+                var sizes = media.preview_size.split('x')
+                media.size = {
+                    width  : +sizes[0],
+                    height : +sizes[1],
+                }
+            } else {
+                media.size = {}
+                for (var size in media.preview_size) if (media.preview_size.hasOwnProperty(size)) {
+                    var sizes = media.preview_size[size].split('x')
+                    media.size[size] = {
+                        width  : +sizes[0],
+                        height : +sizes[1],
+                    }
+                }
+            }
+        })
+
+        if (user.reviews_counts.total) {
+            data.reviewsCount = t('{n} review|{n} reviews', user.reviews_counts.total)
+        }
+
+        data.hasTopContest = false
+        if (user.global_contest) {
+            for (var cityId in user.global_contest) {
+                if (cityId == CITY_ID || cityId == 'global') {
+                    data.hasTopContest = true
+                    break
+                }
+            }
+        }
+
+        user.dates = null
+        if (user.busy.length) {
+            user.dates = []
+            user.busy.forEach(function (userBusy) {
+                if (userBusy.busy) {
+                    user.dates.push(userBusy.date)
+                }
+            })
+            if (data.weddingDate) {
+                var dateText = moment(data.weddingDate).format('LL')
+                if (user.dates.indexOf(data.weddingDate) >= 0) {
+                    user.freeDate = {
+                        status : 3,
+                        text : t('Busy on {date}', {'{date}':dateText}),
+                    }
+                } else {
+                    var status = user.trust>0 ? 0 : 1
+                    user.freeDate = {
+                        status : status,
+                        text : status===1 ? t('Probably available on {date}', {'{date}':dateText}) : t('Available on {date}', {'{date}':dateText}),
+                    }
+                }
+            }
+        }
+        data.avatar = window.user.avatar.render(user, 76, true)
+
+        return data
+    },
+
+    initCard : function($card) {
+        var $gallery = $card.find('[card-elem="gallery"]')
+        if ($gallery.find('[catalog-lazy="image"]').length) {
+            return false
+        }
+        if ($gallery.hasClass('_slided')) {
+            return true
+        }
+        initSlider($gallery, 'h', true, true)
+        $gallery.addClass('_slided')
+    },
+
+    afterRender: function() {
+        catalog.$main.find('[user-elem="main"]').each(function(i, $card) {
+            $card = $($card)
+            waitImages($card, function() {
+                catalog.user.initCard($card)
+            })
+        })
+    },
+
+    ajaxParams : function () {
+        var result = {
+            url  : API_URL + '/v2/directory/users/' + filters.generateQueryString(),
+            data : {
+                fields       : ['params', 'busy', 'trust', 'catalog_media', 'catalog_prices'],
+                preview_size : '0x200x0',
+                media_limit  : 10,
+            }
+        }
+        if (catalog.type.entity != undefined) {
+            result.data.role_id = catalog.type.entity
+        }
+
+        return result
+    },
+}
+
+/* 
+ * catalog_venue.js
+ */
+catalog.venue = {
+    $dayBalloon : null,
+
+    schedules : {},
+    venues    : {},
+
+    tpl : {
+        card : twig.compile(
+            '<div class="venueCard{{ card.isPro ? "-top" }}{{ card.room|length <= 1 ? " venueCard-oneRoom" }}" card-elem="main" card-id="{{ card.id }}">' +
+                '<div class="venueCard_head">' +
+                    '{{ fav }}' +
+                    '<span class="venueCard_name">' +
+                        '<a href="{{ card.url }}" target="_blank">{{ card.name }}</a>' +
+                        '{% if card.needBadge %}' +
+                            '<div class="card_badge-pro" text="PRO">' +
+                                '{% if isBlogTop %}' +
+                                    '<div class="balloon-dark">' +
+                                        '<a class="color_white" href="https://www.gorko.ru/blog/#7" target="_blank">' + t('PRO accounts in details') + '</a>' +
+                                    '</div>' +
+                                '{% endif %}' +
+                            '</div>' +
+                        '{% endif %}' +
+                    '</span>' +
+                    '{% if card.isHasGift %}' +
+                        '<div class="venueCard_gift">' +
+                            '<a class="gift" gift-action="show" object-type="venue" object-id="{{ card.id }}" source="catalog">' + t('Gift for booking') + '</a>' +
+                        '</div>' +
+                    '{% endif %}' +
+                '</div>' +
+                '<p class="venueCard_address">' +
+                    '{% if card.coordinate %}' +
+                        '<a catalog-action="showmap" data-latitude="{{ card.coordinate.latitude }}" data-longitude="{{ card.coordinate.longitude }}" data-name="{{ card.name }}" data-address="{{ card.address }}{% if card.landmark %} – {{ card.landmark }}{% endif %}" data-url="{{ card.url }}">' +
+                            '{{ card.address }}{% if card.landmark %} – <b>{{ card.landmark }}</b>{% endif %}' +
+                        '</a>' +
+                    '{% else %}' +
+                        '{{ card.address }}{% if card.landmark %} – <b>{{ card.landmark }}</b>{% endif %}' +
+                    '{% endif %}' +
+                '</p>' +
+                '{% if metro %}' +
+                    '<p class="venueCard_address">{{ metro }}</p>' +
+                '{% endif %}' +
+
+                '{% if card.roomBusy %}' +
+                    '<div class="card_freedate-{{ card.roomBusy.status }}">{{ card.roomBusy.text }}</div>' +
+                '{% endif %}' +
+                '{% if card.busyMonths %}' +
+                    '<div class="venueCard_schedule">' +
+                        t('Check out the availability on your date') +
+                        '<span class="fake_link venueCard_weddate" catalog-action="set_weddate" object-id="{{ card.id }}">' + t('Select date') + '</span>' +
+                        '<div class="venueCard_schedule_text">' + t('Next 6 months occupancy') + '</div>' +
+                        '<div class="venueCard_monthes">' +
+                            '{% for busy in card.busyMonths %}' +
+                                '<div class="venueCard_month" month-name="{{ busy.monthShortName }}" style="height:{{ busy.percent }}%"></div>' +
+                            '{% endfor %}' +
+                        '</div>' +
+                    '</div>' +
+                '{% endif %}' +
+
+                '{% if card.room|length > 1 %}' +
+                    '<div class="venueCard_content" venue-elem="content">' +
+                        '{% for room in card.room %}' +
+                            '<div class="roomCard{{ room.busy == 2 ? "-notavailable" }}">' +
+                                '<a class="roomCard_media"{% if room.busyText %} status-busy="{{ room.busy }}" status-text="{{ room.busyText }}"{% endif %} href="{{ room.url }}" target="_blank">' +
+                                    '{% if isLazy %}' +
+                                        '<span class="media-dummy" catalog-lazy="image" data-src="{{ room.cover_url }}" style="display:inline-block;width:310px;height:200px" >' +
+                                    '{% else %}' +
+                                        '<img src="{{ room.cover_url }}" width="310" height="200" alt="">' +
+                                    '{% endif %}' +
+                                '</a>' +
+                                '<p class="roomCard_name">' +
+                                    '{{ room.name }}' +
+                                    '{% if room.panorama_url %}' +
+                                        '<a href="{{ room.panorama_url }}" class="roomCard_panorama" target="_blank"></a>' +
+                                    '{% endif %}' +
+                                '</p>' +
+                                '<div class="roomCard_props">' +
+                                    '{% for param in room.param %}' +
+                                        '<p class="roomCard_prop">' +
+                                            '<span class="roomCard_prop_name">{{ param.name }}</span>' +
+                                            '<span class="roomCard_prop_value">{{ param.text }}</span>' +
+                                        '</p>' +
+                                    '{% endfor %}' +
+                                '</div>' +
+                            '</div>' +
+                        '{% endfor %}' +
+                    '</div>' +
+                '{% else %}' +
+                    '{% if card.room|length == 1 %}' +
+                        '<div class="venueCard_content" venue-elem="content">' +
+                            '{% for media in card.room[0].media %}' +
+                                '{% if media.url %}' +
+                                    '<a class="venueCard_media" href="{{ card.room[0].url }}" target="_blank">' +
+                                        '{% if isLazy %}' +
+                                            '<span class="media-dummy" catalog-lazy="image" data-src="{{ media.url }}=w310-h200-n-e31" style="display:inline-block;width:310px;height:200px" >' +
+                                        '{% else %}' +
+                                            '<img src="{{ media.url }}=w310-h200-n-e31" width="310" height="200" alt="">' +
+                                        '{% endif %}' +
+                                    '</a>' +
+                                '{% endif %}' +
+                            '{% endfor %}' +
+                        '</div>' +
+                        '<div class="roomCard_props">' +
+                            '<div class="roomCard_props_wrapper">' +
+                                '{% if card.room[0].panorama_url %}' +
+                                    '<a href="{{ card.room[0].panorama_url }}" class="roomCard_panorama" target="_blank"></a>' +
+                                '{% endif %}' +
+                                '{% for param in card.room[0].param %}' +
+                                    '<p class="roomCard_prop">' +
+                                        '<span class="roomCard_prop_name">{{ param.name }}</span>' +
+                                        '<span class="roomCard_prop_value">{{ param.text }}</span>' +
+                                    '</p>' +
+                                '{% endfor %}' +
+                            '</div>' +
+                        '</div>' +
+                    '{% endif %}' +
+                '{% endif %}' +
+                '{% if card.description %}' +
+                    '<div class="venueCard_description">{{ card.description }}</div>' +
+                '{% endif %}' +
+                '<div class="venueCard_props">' +
+                    '{% for param in card.params %}' +
+                        '{% if param.type == "checked" %}' +
+                            '<p class="venueCard_prop"><b>{{ param.name }}</b></p>' +
+                        '{% elseif param.type == "features" or param.type == "" %}' +
+                            '<p class="venueCard_prop"><b>{{ param.name }}: </b> {{ param.text }}</p>' +
+                        '{% endif %}' +
+                    '{% endfor %}' +
+                '</div>' +
+                '{% if card.rating_explain %}' +
+                    '<div style="text-align:right;padding:10px 20px;">' +
+                        '<small style="font-size:11px;">{{ card.rating_explain }}</small><br/>' +
+                    '</div>' +
+                '{% endif %}' +
+            '</div>'
+        ),
+        balloon : twig.compile(
+            '<div class="calendarBalloon" calendar-elem="balloon">' +
+                '<div class="calendarBalloon_head">' +
+                    '{% if available %}' +
+                        '<p class="calendarBalloon_status">' + t('Available') + '</p>' +
+                        '<p class="calendarBalloon_notice">{{ available }}</p>' +
+                    '{% else %}' +
+                        '<p class="calendarBalloon_status _na">' + t('No spaces available') + '</p>' +
+                    '{% endif %}' +
+                '</div>' +
+                '{% if schedule.2.count or schedule.3.count %}' +
+                    '<div class="calendarBalloon_body">' +
+                        '{% if schedule.2.count %}' +
+                            '<div class="calendarBalloon_text _status2">' + t('Prebooked') + ' <span class="calendarBalloon_count">{{ schedule.2.count }}</span></div>' +
+                        '{% endif %}' +
+                        '{% if schedule.3.count %}' +
+                            '<div class="calendarBalloon_text _status3">' + t('Busy') + ' <span class="calendarBalloon_count">{{ schedule.3.count }}</span></div>' +
+                        '{% endif %}' +
+                    '</div>' +
+                '{% endif %}' +
+            '</div>'
+        ),
+    },
+
+    jsonField : 'restaurants',
+
+    init : function() {
+        var module = catalog.venue
+        if (catalog.type.model == 'venue') {
+            module.jsonField = 'venues'
+        }
+        if (USER.isGuest) {
+            delete module.calendar
+        }
+        $(document).ready(module.initSliders)
+    },
+
+    render : function(card) {
+        return twig.render(catalog.venue.tpl.card, card, true)
+    },
+
+    initSliders : function() {
+        catalog.$cards.find('[venue-elem="content"]').each(function(i, $content) {
+            $content = $($content)
+            $content.removeAttr('venue-elem')
+            initSlider($content, 'h', true)
+        })
+    },
+
+    afterRender : function() {
+        setTimeout(catalog.venue.initSliders, 100)
+    },
+
+    prepare : function(data) {
+        var card = data.card
+
+        if (card.metro && card.metro.length) {
+            data.metro = [];
+            for (var i=0; card.metro[i]; i++) {
+                data.metro.push(card.metro[i].name)
+            }
+            data.metro = t('{listOfSubwayStations} sub. st.', {'{listOfSubwayStations}': data.metro.join(', ')});
+        }
+        card.address = card.address.replace(/\"/g, '&#34;')
+        if (card.landmark) {
+            card.landmark = card.landmark.replace(/\"/g, '&#34;')
+        }
+
+        for (var r=0; card.room[r]; r++) {
+            var room = card.room[r]
+            if (room.panorama) {
+                var re = /panorama\/(\d+)\/(\w+)/i
+                var found = card.room[r].panorama.match(re)
+                if (found && found.length) {
+                    card.room[r].panorama_url = card.canonicalUrl + 'panorama/#panoId=' + found[1] + '&sceneId=' + found[2]
+                }
+            }
+            if (card.room[r].media[0]) {
+                card.room[r].cover_url = card.room[r].media[0].url + '=w310-h200-n-e31'
+            }
+        }
+
+        if (card.isPro && document.location.hostname.indexOf('centerwedding.com') >= 0) {
+            card.needBadge = 1
+        }
+
+        return data
+    },
+
+    load : function(page) {
+        let ajaxParams = {
+            'entity[channel]': catalog.channel,
+            'entity[cityId]': CITY_ID,
+            'entity[languageId]': catalog.languageId,
+            'entity[limitDeployedMedia]': 10,
+            'entity[specId]': filters.list[filters.indexes['event']].result[0],
+            'list[cityId]': CITY_ID,
+            'list[ids]': document.location.search.indexOf('is_fav') > 0 && fav.list[catalog.type.model] ? fav.list[catalog.type.model].join(',') : '',
+            'list[page]': catalog.page,
+            'list[perPage]': catalog.perPage,
+            'list[seed]': catalog.seed,
+            'list[test]': encodeURI(catalog.test),
+            'list[typeId]': catalog.type.entity,
+
+            // 'entity[disable]': "int",
+            // 'list[bbox]': "string",
+            // 'list[authHash]': "string",
+        }
+        if (filters.list[filters.indexes['date']]) {
+            ajaxParams['entity[date]'] = filters.list[filters.indexes['date']].result[0]
+        }
+
+        preloading.set(catalog.$cards)
+
+        var filter = filters.generateQueryString().replace('?', '')
+        ajaxParams['entity[filters]'] = encodeURI(filter)
+        ajaxParams['list[filters]'] = encodeURI(filter)
+
+        return $.ajax({
+            type      : 'GET',
+            url       : API_URL + '/v3/venuecard?',
+            data      : ajaxParams,
+            xhrFields : {
+                withCredentials: true,
+            },
+            dataType : 'json',
+        }).then(function(json) {
+            var data = { 
+                meta: json.meta
+            }
+            data[catalog.venue.jsonField] = []
+            json.list.forEach(function (id) {
+                var entity = json.entity[id]
+                if (catalog.explainRating) {
+                    $.ajax({
+                        type: 'GET',
+                        url: API_URL + '/v2/venues/' + id + '/rating',
+                        xhrFields: {
+                            withCredentials: true,
+                        },
+                        dataType: 'json',
+                        async: false,
+                        success: function (rating) {
+                            entity.rating_explain = rating.rating_explain
+                        },
+                    })
+                }
+                data[catalog.venue.jsonField].push(entity)
+            })
+            data.meta.total_count = data.meta.totalCount
+            data.meta.pages_count = data.meta.totalPages
+            data.meta.per_page = data.meta.perPage
+
+            return data
+        })
+    },
+
+    getSchedules : function(venueId) {
+        var Venue = catalog.venue
+        return new Promise(function(resolve, reject) {
+            if (USER.isGuest) {
+                resolve({})
+                return null
+            }
+            if (Venue.schedules[venueId]) {
+                resolve(Venue.schedules[venueId])
+            } else {
+                $.ajax({
+                    type     : 'GET',
+                    url      : API_URL + '/v2/' + catalog.type.model + 's/' + venueId + '/schedule',
+                    dataType : 'json',
+                    xhrFields: {
+                        withCredentials: true
+                    },
+                    success  : function(json) {
+                        Venue.schedules[venueId] = {}
+                        Venue.venues[venueId] = {
+                            rooms : json.rooms.length,
+                        }
+                        json.rooms.map(function(room) {
+                            for (var date in room.dates) if (room.dates.hasOwnProperty(date)) {
+                                if (!Venue.schedules[venueId][date]) {
+                                    Venue.schedules[venueId][date] = {
+                                        0 : {
+                                            count : json.rooms.length,
+                                            title : json.meta.status_list.getBy('key', 0).title,
+                                        },
+                                    }
+                                }
+                                var status = room.dates[date]
+                                if (!Venue.schedules[venueId][date][status]) {
+                                    Venue.schedules[venueId][date][status] = {
+                                        count : 1,
+                                        title : json.meta.status_list.getBy('key', status).title
+                                    }
+                                } else {
+                                    Venue.schedules[venueId][date][status].count++
+                                }
+                                Venue.schedules[venueId][date][0].count--
+                            }
+                        })
+                        resolve(Venue.schedules[venueId])
+                    }
+                })
+            }
+        })
+    },
+
+    calendar : {
+        params : {
+            extended : true,
+        },
+        balloon : {
+            show : function($day) {
+                var Venue = catalog.venue
+                if (Venue.$dayBalloon !== null) {
+                    Venue.calendar.balloon.hide()
+                }
+
+                var date = $day.attr('data-date')
+                if (!date) {
+                    return false
+                }
+
+                var venueId = +$day.closest('[object-id]').attr('object-id')
+                var schedule = Venue.schedules[venueId] && Venue.schedules[venueId][date] || null
+                if (!schedule) {
+                    schedule = {
+                        0 : {
+                            count : Venue.venues[venueId] ? Venue.venues[venueId].rooms : 0,
+                        },
+                    }
+                }
+                var top = $day.offset().top - calendar.$main.offset().top
+                var left = $day.offset().left - calendar.$main.offset().left
+                catalog.venue.$dayBalloon = twig.render(catalog.venue.tpl.balloon, {
+                    schedule  : schedule,
+                    available : schedule[0].count ? t('{n} space|{n} spaces', schedule[0].count) : false,
+                }, true).appendTo(calendar.$main)
+                catalog.venue.$dayBalloon.css({
+                    left : left + 'px',
+                    top  : top + 'px',
+                })
+            },
+            hide : function() {
+                if (catalog.venue.$dayBalloon === null) {
+                    return
+                }
+                catalog.venue.$dayBalloon.remove()
+                catalog.venue.$dayBalloon = null
+            },
+        },
+    },
+}
+
+/* 
+ * dresses.js
+ */
+var dresses = {
+    dress : null,
+
+    $main : null,
+    $column : [null, null, null],
+
+    tpl : {
+        column : '<div class="dressCards_column"></div>',
+    },
+    inited : false,
+    column : [0, 0, 0],
+
+    minHeight : function() {
+        if (dresses.column[0] == 0) {
+            return 0
+        }
+        for (var i=1, result=0; i<3; i++) {
+            if (dresses.column[i] < dresses.column[result]) {
+                result = i
+            }
+        }
+        return result
+    },
+
+    push : function($dress) {
+        var index = dresses.minHeight()
+        $dress.appendTo(dresses.$column[index])
+        dresses.column[index] += $dress.innerHeight()
+    },
+    
+
+    events : {
+        click : function(ev) {
+            var $el = $(ev.target)
+            $showDress = $el.closest('[dress-action="show"]')
+            if ($showDress.length) {
+                ev.preventDefault()
+                var $dress = $showDress.closest('[dress-elem="card"]')
+                dresses.dress.show($dress.attr('dress-id'), null)
+            }
+        }
+    },
+
+    init : function () {
+        if (dresses.inited) {
+            return true
+        }
+        dresses.$main = $('#dresses')
+        if (!dresses.$main.length) {
+            dresses.$main = null
+            return false
+        }
+
+        if (!dresses.$main.hasClass('_columnized')) {
+            dresses.createColumns()
+            dresses.sort()
+        } else {
+            $column = dresses.$main.children()
+            for (var i=0; i<3; i++) {
+                dresses.$column[i] = $($column[i])
+            }
+        }
+
+        $(window).on(dresses.events)
+        dresses.inited = true
+    },
+
+    createColumns : function() {
+        dresses.$main.removeClass('_columnized')
+        for (var i=0; i<3; i++) {
+            dresses.$column[i] = $(dresses.tpl.column)
+            dresses.$column[i].appendTo(dresses.$main)
+        }
+    },
+
+    sort : function() {
+        var $dresses = dresses.$main.children('[dress-elem="card"]')
+        var count = $dresses.length
+        $dresses.each(function(i, $dress) {
+            $dress = $($dress)
+            var $img = $dress.find('img')
+            if ($img.innerHeight()) {
+                dresses.push($dress)
+                count--
+                if (count <= 0 && !dresses.$main.hasClass('_columnized')) {
+                    dresses.$main.addClass('_columnized')
+                }
+            } else {
+                $img.load(function() {
+                    dresses.push($dress)
+                    count--
+                    if (count <= 0 && !dresses.$main.hasClass('_columnized')) {
+                        dresses.$main.addClass('_columnized')
+                    }
+                })
+            }
+        })
+    },
+}
+
+$(document).ready(function() {
+    dresses.init()
+})
+
+/* 
+ * dresses_dress.js
+ */
+dresses.dress = {
+    $main   : null,
+    $thumbs : null,
+    $medias : null,
+    $salons : null,
+    $cache  : null,
+
+    id    : 0,
+    cache : {},
+    info  : null,
+    start : {
+        title : null,
+        url : null,
+    },
+    onPage : false,
+    list  : [],
+    index : 0,
+    paramSort : [
+        'param_country',
+        'param_year',
+        'param_color',
+        'param_fashion',
+        'param_details',
+    ],
+
+    tpl : {
+        cache : '<div class="pItem_cache"></div>',
+        brandLink : '<a href="{{ url }}">{{ name }}</a>',
+        main : Twig.twig({data:
+            '<div class="pDress" dress-id="{{ dress.id }}">' +
+                '<div class="pItem_title">' +
+                    '<a class="fav pItem_fav" fav-action="toggle" model-name="{% if dress.model_id %}dressmodel{% else %}shopdress{% endif %}" model-id="{% if dress.model_id %}{{ dress.model_id }}{% else %}{{ dress.id }}{% endif %}" fav-value="{{ isFav }}"></a>' +
+                    '<h1>{{ h1 }}</h1>' +
+                '</div>' +
+                '<div class="pItem_info">' +
+                    '<div class="pItem_owner">' +
+                        '{% if dress.salons.best.price and dress.salons.best.price.value %}' +
+                            '<p class="pItem_price">{{ dress.salons.best.price.value_display }}</p>' +
+                            '<p class="pDress_bestOffer">' + t('Best offer') + '</p>' +
+                        '{% endif %}' +
+                        '<p class="pItem_owner_name"><a href="{{ dress.salons.best.url }}" target="_blank">{{ dress.salons.best.name }}</a></p>' +
+                        '<button class="button-small" dress-action="contacts" cp-contentType="Shop" cp-contentId="{{ dress.salons.best.id }}" controller="Shop" action="show">' + t('Show phone and contact info') + '</button>' +
+                        '<p class="pDress_toSalons">' +
+                            '<a dress-action="salons">' + t('View all offers') + '</a>' +
+                        '</p>' +
+                    '</div>' +
+                    '{% if params and params|length %}' +
+                        '<div class="pItem_params">' +
+                            '{% for param in params %}' +
+                                '<p class="pItem_param">' +
+                                    '<span class="pItem_param_name">{{ param.name }}</span> {{ param.value_text }}' +
+                                '</p>' +
+                            '{% endfor %}' +
+                        '</div>' +
+                    '{% endif %}' +
+                    '{% if dress.text %}' +
+                        '<div class="pItem_description">{{ dress.text }}</div>' +
+                    '{% endif %}' +
+                '</div>' +
+                '<div class="pItem_gallery-vertical">' +
+                    '<div class="pItem_stage" style="width:{{ maxSize.width}}px;height:{{ maxSize.height }}px;">' +
+                        '{% for photo in dress.photos %}' +
+                            '<img class="pItem_media{{ loop.first ? " _cur" }}" src="{{ photo.480x720x0 }}" gallery-elem="media">' +
+                        '{% endfor %}' +
+                    '</div>' +
+                    '{% if dress.photos|length > 1 %}' +
+                        '<div class="pItem_thumbs">' +
+                            '{% for photo in dress.photos %}' +
+                                '<img class="pItem_thumb{{ loop.first ? " _cur" }}" src="{{ photo.60x90x1 }}" width="60" height="90" gallery-action="media">' +
+                            '{% endfor %}' +
+                        '</div>' +
+                    '{% endif %}' +
+                '</div>' +
+
+                '<div class="pDress_salons" dress-elem="salons">' +
+                    '<h3 class="pItem_caption">' + t('Where to buy') + '</h3>' +
+                    '{% for salon in dress.salons.list %}' +
+                        '<div class="dressSalon">' +
+                            '<div class="dressSalon_name">' +
+                                '<a href="{{ salon.url }}">{{ salon.name }}</a>' +
+                            '</div>' +
+                            '<div class="dressSalon_contacts">' +
+                                '<button class="button-small" dress-action="contacts" cp-contentType="Shop" cp-contentId="{{ salon.id }}" controller="Shop" action="show">' + t('Show phone and contact info') + '</button>' +
+                            '</div>' +
+                            '<div class="dressSalon_price">{{ salon.price.value_display }}</div>' +
+                            '<div class="dressSalon_request">' +
+                                '<a href="javascript:void(0);" dress-action="request" salon-id="{{ salon.id }}">' + t('Check availability') + '</a>' +
+                            '</div>' +
+                        '</div>' +
+                    '{% endfor %}' +
+                '</div>' +
+            '</div>'
+        }),
+    },
+
+
+    init : function() {
+        var Dress = dresses.dress
+        Dress.$medias = Dress.$main.find('[gallery-elem="media"]')
+        Dress.$thumbs = Dress.$main.find('[gallery-action="media"]')
+        Dress.$salons = Dress.$main.find('[dress-elem="salons"]')
+        Dress.$main.on(Dress.events)
+        if (Dress.start.url == null) {
+            Dress.start.url = document.location.href
+            Dress.start.title = document.title
+        }
+        history.pushState(null, null, Dress.info.dress.url)
+        ajaxHit(Dress.info.dress.url)
+        for(var salonI in Dress.info.dress.salons.list) {
+            if (Dress.info.dress.salons.list.hasOwnProperty(salonI)) {
+                viewInfo({
+                    contentType : 'shop',
+                    contentId   : Dress.info.dress.salons.list[salonI].id,
+                    controller  : 'Dress',
+                    action      : 'show',
+                }, {
+                    portfolio : 1,
+                })
+            }
+        }
+        document.title = Dress.info.seo.title
+    },
+
+    events : {
+        click : function(ev) {
+            var $el = $(ev.target)
+            if ($el.is('[dress-action="request"]')) {
+                dresses.request.show(dresses.dress.info, $el.attr('salon-id'))
+            } else if ($el.is('[gallery-action="media"]')) {
+                dresses.dress.showMedia($el)
+            } else if ($el.is('[dress-action="contacts"]')) {
+                ppContacts.show({
+                    // userId      : +$el.attr('cp-user'), // todo если это не нужно, то можно удалить
+                    contentId   : +$el.attr('cp-contentid'),
+                    contentType : $el.attr('cp-contenttype'),
+                    controller  : $el.attr('controller'),
+                }, $el, {objectName : dresses.dress.info.dress.name})
+            } else if ($el.is('[dress-action="salons"]')) {
+                $(window).scrollTop(dresses.dress.$salons.offset().top - 20)
+            }
+        }
+    },
+
+    close : function() {
+        var Dress = dresses.dress
+        if (Dress.onPage) {
+            return false
+        }
+
+        history.pushState(null, null, Dress.start.url)
+        ajaxHit(Dress.start.url)
+        document.title = Dress.start.title
+
+        Dress.$main   = null
+        Dress.$thumbs = null
+        Dress.$medias = null
+        Dress.$salons = null
+
+        Dress.info  = null
+        Dress.start.url   = null
+        Dress.start.title = null
+        Dress.list = []
+    },
+
+    prepare : function(dress) {
+        var Dress = dresses.dress
+        var result = {
+            dress : dress
+        }
+        result.params  = []
+        if (dress.country) {
+            result.params.push({name: t('Country'), value_text: dress.country})
+        }
+        if (dress.color) {
+            result.params.push({name: t('Color'), value_text: dress.color})
+        }
+        if (dress.styles && dress.styles.length) {
+            result.params.push({name: t('Style and silhouette'), value_text: dress.styles.map(function (value) { return value.title }).join(', ')})
+        }
+        if (dress.model_id) {
+            result.isFav = +fav.isFav('dressmodel', dress.model_id)
+        } else {
+            result.isFav = +fav.isFav('shopdress', dress.id)
+        }
+
+        result.maxSize = {
+            width  : 0,
+            height : 0,
+        }
+        dress.photo_sizes.map(function(size) {
+            var sizes = size['480x720x0'].split('x')
+            if (sizes[0] > result.maxSize.width) {
+                if (sizes[0] > 480) {
+                    sizes[1] = sizes[1]*480/sizes[0]
+                    sizes[0] = 480
+                }
+                result.maxSize.width = sizes[0]
+            }
+            if (sizes[1] > result.maxSize.height) {
+                result.maxSize.height = sizes[1]
+            }
+        })
+        result.h1 = t('{dress_name} by {dress_brand}', {
+            '{dress_name}': dress.name,
+            '{dress_brand}': dress.brand_url ? simpleTpl(Dress.tpl.brandLink, {name: dress.brand_name, url: dress.brand_url}, false) : dress.brand_name
+        })
+
+        return result
+    },
+
+    showMedia: function($thumb) {
+        var Dress = dresses.dress
+        if ($thumb.is('._cur')) {
+            return false
+        }
+        Dress.$thumbs.filter('._cur').removeClass('_cur')
+        Dress.$medias.filter('._cur').removeClass('_cur')
+
+        var $media = $(Dress.$medias[$thumb.index()])
+        $media.addClass('_cur')
+        $thumb.addClass('_cur')
+    },
+
+    load : {
+        dress : function(dressId) {
+            return $.ajax({
+                type     : 'GET',
+                url      : API_URL + '/v2/dresses/?id=' + dressId,
+                data     : {
+                    city_id: CITY_ID,
+                    preview_size: '480x720x0,60x90x1'
+                },
+                dataType : 'json',
+                xhrFields: {
+                    withCredentials: true
+                }
+            })
+        },
+        seo : function(url) {
+            return $.ajax({
+                type     : 'GET',
+                url      : API_URL + '/v2/interface/titles',
+                data     : {
+                    url : url
+                },
+                dataType : 'json',
+                xhrFields: {
+                    withCredentials: true
+                }
+            })
+        }
+    },
+
+    switch : {
+        next: function() {
+            dresses.dress.switch.do(1)
+        },
+        prev: function() {
+            dresses.dress.switch.do(-1)
+        },
+        do: function(dir) {
+            var Dress = dresses.dress
+            var dressId = Dress.list[Dress.index+dir]
+            dresses.dress.show(carId)
+        }
+    },
+
+    preload : function(dressId) {
+        var Dress = dresses.dress
+        if (Dress.cache[dressId]) {
+            return new Promise(function(resolve, reject) {
+                resolve(true)
+            })
+        } else {
+            return new Promise(function(resolve, reject) {
+                var dressInfo = {}
+                Dress.load.dress(dressId)
+                .then(function(json) {
+                    dressInfo = Dress.prepare(json.dress)
+                }).then(function(json) {
+                    return Dress.load.seo(dressInfo.dress.url)
+                })
+                .then(function(json) {
+                    dressInfo.seo = json;
+                    if (Dress.$cache === null) {
+                        Dress.$cache = simpleTpl(Dress.tpl.cache, {}, true).appendTo($('body'))
+                    }
+                    Dress.cache[dressId] = {
+                        info     : dressInfo,
+                        $content : $(Dress.tpl.main.render(dressInfo)).appendTo(Dress.$cache),
+                    }
+                    resolve(true)
+                })
+            })
+        }
+    },
+
+    get : function(dressId) {
+        var Dress = dresses.dress
+        if (Dress.cache[dressId]) {
+            return new Promise(function(resolve, reject) {
+                resolve(Dress.cache[dressId])
+            })
+        } else {
+            return new Promise(function(resolve, reject) {
+                Dress.preload(dressId)
+                .then(function(loaded) {
+                    resolve(Dress.cache[dressId])
+                })
+            })
+        }
+    },
+
+    show : function(dressId, $page, mediaId) {
+        var Dress = dresses.dress
+        Dress.onPage = $page && $page.length
+        if (Dress.onPage && Dress.$main !== null) {
+            return false
+        }
+
+        bigpreloader.show(Dress.onPage ? 'light' : null)
+
+        Dress.get(dressId).then(function(dressInfo) {
+            Dress.info = dressInfo.info
+            if (Dress.$main !== null) {
+                Dress.$main.appendTo(Dress.$cache)
+            }
+            Dress.$main = dressInfo.$content
+            Dress.init(mediaId)
+            if (Dress.onPage) {
+                Dress.$main.appendTo($page)
+            } else {
+                var prev = null
+                var next = null
+                lightbox.show(Dress.$main, 900, {
+                    close : Dress.close,
+                    prev  : prev,
+                    next  : next,
+                }, {class:'ppDress'})
+            }
+            viewInfoStats.show('Car', Dress.info.dress.id, Dress.$main)
+            bigpreloader.hide()
+        })
+    },
+
+}
+
+/* 
+ * dresses_request.js
+ */
+dresses.request = {
+    $main   : null,
+    $salons : null,
+
+    info : null,
+
+    tpl : {
+        main : Twig.twig({data:
+            '<form class="ppRequest ppDressRequest">' +
+                '<h1 class="ppRequest_caption lightbox_caption">' + t('Request availability') + '</h1>' +
+                '<div class="ppRequest_info">' +
+                    '<img class="ppRequest_photo" src="{{ dress.photos.0.480x720x0 }}" alt="" width="200">' +
+                    '<p class="ppRequest_name">{{ dress.name }}</p>' +
+                '</div>' +
+                '<div class="ppRequest_form">' +
+                    '<div class="ppDressRequest_sizes">' +
+                        '<p class="ppDressRequest_caption">' + t('What size are you interested in?') + '</p>' +
+                        '{% for size in sizes %}' +
+                            '{{ size }}' +
+                        '{% endfor %}' +
+                    '</div>' +
+                    '<input class="ppRequest_field-text" placeholder="' + t('Name') + '" type="text" value="" name="name" ff-empty="[ff]' + t('Name') + '[/ff]">' +
+                    '<input class="ppRequest_field-text" placeholder="' + t('E-mail') + '" type="text" value="" name="email" ff-empty="[ff]' + t('email') + '[/ff]">' +
+                    '<textarea class="ppRequest_field-area" name="description" rows="3" placeholder="' + t('Note') + '"></textarea>' +
+                    '<div class="ppDressRequest_salons" request-elem="salons">' +
+                        '<p class="ppDressRequest_caption">' + t('Your request will be sent to salons') + '</p>' +
+                        '{% for salon in salons %}' +
+                            '{{ salon }}' +
+                        '{% endfor %}' +
+                        '{% if salons|length > 3 %}' +
+                            '<p class="ppDressRequest_more">' +
+                                '<a href="javascript:void(0);" request-action="more_salons">{{ moreText }}</a>' +
+                            '</p>' +
+                        '{% endif %}' +
+                    '</div>' +
+                    '<p class="ppRequest_field-checkbox">{{ emailCheckbox }}</p>' +
+                    '<p class="ppRequest_field-checkbox">' +
+                        '{{ phoneCheckbox }}' +
+                        '<input class="ppRequest_field-text" type="text" name="phone" value="">' +
+                    '</p>' +
+                '</div>' +
+                '<div class="ppRequest_ffText" ff-elem="text"></div>' +
+                '<div class="ppRequest_send">' +
+                    '<button class="button-big" ff-elem="button" type="button" request-action="send">' + t('Send') + '</button>' +
+                    '<span class="ppRequest_cancel"> или <a lightbox-action="close">' + t('Cancel') + '</a></span>' +
+                '</div>' +
+            '</form>'
+        }),
+        step2 :
+            '<div class="ppRequest">' +
+                '<h1 class="ppRequest_caption lightbox_caption">' + t('Request sent') + '</h1>' +
+                '<button class="button" lightbox-action="close">' + t('Continue viewing dresses') + '</button>' +
+            '</div>'
+    },
+
+    close : function() {
+        var Request = dresses.request
+        dresses.dress.close()
+        Request.$main   = null
+        Request.$salons = null
+        Request.info = null
+    },
+
+    render : {
+        step1 : function(salonId) {
+            var Request = dresses.request
+            var tplParams = copyObject(Request.info)
+
+            tplParams.sizes = []
+            for (var size=34; size<=60; size += 2) {
+                tplParams.sizes.push(switcher.render({
+                    class   : 'ppDressRequest_size',
+                    name    : 'size[]',
+                    text    : size,
+                    value   : size,
+                }))
+            }
+            tplParams.salons = []
+            for (var i=0; Request.info.dress.salons.list[i]; i++) {
+                var salonInfo = Request.info.dress.salons.list[i]
+                var salon = switcher.render({
+                    class    : 'ppDressRequest_salon',
+                    type     : 'checkbox',
+                    name     : 'salon[]',
+                    checked  : (salonInfo.id == salonId),
+                    value    : salonInfo.id,
+                    text     : salonInfo.name,
+                })
+                if (salonInfo.id == salonId) {
+                    tplParams.salons.unshift(salon)
+                } else {
+                    tplParams.salons.push(salon)
+                }
+            }
+            if (tplParams.salons.length > 3) {
+                tplParams.moreText = t('Show more {count}', {'{count}' : tplParams.salons.length - 3})
+            }
+            tplParams.emailCheckbox = switcher.render({
+                type     : 'checkbox',
+                name     : 'send[]',
+                checked  : true,
+                disabled : true,
+                value    : 'email',
+                text     : t('Get the reply by email'),
+            })
+            tplParams.phoneCheckbox = switcher.render({
+                type  : 'checkbox',
+                name  : 'send[]',
+                value : 'phone',
+                text  : t('Get the reply by phone'),
+            })
+            return $(Request.tpl.main.render(tplParams))
+        },
+        step2 : function() {
+            var Request = dresses.request
+            Request.$main.remove()
+            Request.$main = simpleTpl(Request.tpl.step2, {}, true)
+            lightbox.show(Request.$main, 600, {close:Request.close})
+        }
+    },
+
+    send : function() {
+        var Request = dresses.request
+        var fields = Request.$main.serializeArray()
+        var data = {}
+        for (var i=0; fields[i]; i++) {
+            var field = fields[i]
+            if (field.name == 'size[]') {
+                if (!data.size) {
+                    data.size = []
+                }
+                data.size.push(field.value)
+            } else if (field.name == 'salon[]') {
+                if (!data.salon) {
+                    data.salon = []
+                }
+                data.salon.push(field.value)
+            } else {
+                data[field.name] = field.value
+            }
+        }
+        $.ajax({
+            type     : 'POST',
+            url      : API_URL + '/v2/shopDresses/' + Request.info.dress.id + '/request',
+            data     : JSON.stringify(data),
+            dataType : 'json',
+            xhrFields: {
+                withCredentials: true
+            },
+            success  : function(json) {
+                Request.render.step2()
+            }
+        })
+    },
+
+    expandSalons : function() {
+        dresses.request.$salons.addClass('_expanded')
+    },
+
+    events : {
+        click : function(ev) {
+            var $el = $(ev.target)
+            if ($el.is('[request-action]')) {
+                var Request = dresses.request
+                switch ($el.attr('request-action')) {
+                    case 'send' : return Request.send()
+                    case 'more_salons' : return Request.expandSalons()
+                }
+            }
+        }
+    },
+
+    show : function(dressInfo, salonId) {
+        var Request = dresses.request
+        if (Request.$main !== null) {
+            return false
+        }
+        Request.info = dressInfo
+        console.log(Request.info);
+        Request.$main = Request.render.step1(salonId)
+        Request.$salons = Request.$main.find('[request-elem="salons"]')
+        lightbox.show(Request.$main, 770, {close:Request.close})
+        Request.init()
+    },
+
+    init : function() {
+        var Request = dresses.request
+        Request.$main.on(Request.events)
+        fillFields.init(Request.$main)
+    }
+}
+/* 
+ * pCar.js
+ */
+pCar = {
+    $main : null,
+
+    init: function() {
+        pCar.$main = $('#pCar')
+        if (!pCar.$main.length) {
+            pCar.$main = null
+            return false
+        }
+        cars.car.show(pCar.$main.attr('car-id'), pCar.$main)
+    }
+}
+
+
+function initCarShow() {
+    pCar.init()
+}
+
+/* 
+ * pDress.js
+ */
+pDress = {
+    $main : null,
+
+    init: function() {
+        pDress.$main = $('#pDress')
+        if (!pDress.$main.length) {
+            pDress.$main = null
+            return false
+        }
+        var dressId = pDress.$main.attr('dress-id')
+        if (!dressId) {
+            var match = document.location.pathname.match(/dress\/(\d+)/)
+            if (match !== null) {
+                dressId = +match[1]
+            }
+        }
+        dresses.dress.show(dressId, pDress.$main)
+    }
+}
+
+
+function initDressShopModel() {
+    pDress.init()
+}
+function initDressModel() {
+    pDress.init()
+}
+
+/* 
+ * pSalon.js
+ */
+var pSalon = {
+    $main  : null,
+    $cards : null,
+    $more  : null,
+
+    id      : 0,
+    perPage : 20,
+    page    : 1,
+
+    events : {
+        click : function(ev) {
+            var $el = $(ev.target)
+            if ($el.is('[salon-action="more"]') && !$el.hasClass('_disabled')) {
+                pSalon.more()
+            }
+        },
+    },
+
+    init : function() {
+        pSalon.$main = $('#salon')
+        if (!pSalon.$main.length) {
+            pSalon.$main = null
+            return false
+        }
+
+        pSalon.id = +pSalon.$main.attr('salon-id')
+
+        pSalon.$cards = pSalon.$main.find('[salon-elem="cards"]')
+        pSalon.$more  = pSalon.$main.find('[salon-action="more"]')
+
+        pSalon.$main.on(pSalon.events)
+    },
+
+    more : function() {
+        pSalon.page++
+        preloading.set(pSalon.$cards)
+        pSalon.$more.addClass('_disabled')
+        pSalon.load(pSalon.page).then(function(json) {
+            pSalon.$more.removeClass('_disabled')
+            preloading.remove(pSalon.$cards)
+            var cards = json.dresses
+            var meta = json.meta
+            for (var i=0; cards[i]; i++) {
+                var card = cards[i]
+                var renderData = {
+                    card : cards[i],
+                    fav  : fav.render({
+                        type : 'dress',
+                        id   : card.id,
+                    }),
+                }
+                if (card.salons.best.price.value_display > 0) {
+                    renderData.priceDisplay = t('from {price}', {'{price}': card.salons.best.price.value_display})
+                } else {
+                    renderData.priceDisplay = card.salons.best.price.value_display
+                }
+                renderData.dressName = t('{dress_name} by {dress_brand}', {'{dress_name}': card.name, '{dress_brand}': card.brand_name})
+                catalog.dress.render(renderData).appendTo(pSalon.$cards)
+            }
+            if (meta.page >= meta.pages_count) {
+                pSalon.$more.addClass('h')
+            } else {
+                var moreCount = Math.min(meta.total_count - meta.page * meta.per_page, meta.per_page);
+                pSalon.$more.text(t('Show {cnt} more', {'{cnt}': moreCount}))
+            }
+            setTimeout(dresses.sort, 100)
+        })
+    },
+
+    load : function(page) {
+        return $.ajax({
+            type     : 'GET',
+            url      : API_URL + '/v2/dresses/',
+            data     : {
+                page         : page,
+                per_page     : pSalon.perPage,
+                shop_id      : pSalon.id,
+                preview_size : '252x0x0',
+            },
+            dataType : 'json',
+            xhrFields: {
+                withCredentials: true
+            },
+        })
+    },
+}
+
+function initShopDress() {
+    pSalon.init()
+}
+/* 
+ * pUser.js
+ */
+var pUser = {
+    weddate : null,
+
+    $main : null,
+    $portfolio : null,
+    $spec : null,
+
+    info : {
+        id : 0,
+    },
+
+    events : {
+        change : function(ev) {
+            var $el = $(ev.target)
+            if ($el.is('[name="spec"]')) {
+                pUser.showSpec(+$el.val())
+            }
+        },
+    },
+
+    init : function() {
+        pUser.$main = $('#pUser')
+        if (!pUser.$main.length) {
+            pUser.$main = null
+            return false
+        }
+        pUser.info.id = pUser.$main.attr('user-id') || 0
+        pUser.$main.on(pUser.events)
+        pUser.$portfolio = pUser.$main.find('#portfolio')
+        pUser.$spec = pUser.$main.find('[spec-elem="main"]:not(.h)').first()
+        if (!pUser.$spec.length) {
+            pUser.$spec = null
+        }
+        if (typeof initMyReview !== 'undefined') {
+            initMyReview()
+        }
+        pUser.weddate.init()
+    },
+
+    showSpec : function(specId) {
+        if (pUser.$spec !== null) {
+            pUser.$spec.addClass('h')
+        }
+        pUser.$spec = pUser.$main.find('[spec-elem="main"][spec-id="' + specId + '"]')
+        pUser.$spec.removeClass('h')
+
+        if (pUser.$spec.data('is_main')) {
+            $('#main_spec_content').removeClass('h')
+        } else {
+            $('#main_spec_content').addClass('h')
+        }
+
+        pUser.$portfolio.empty()
+        preloading.set(pUser.$portfolio)
+        pUser.loadPortfolio(specId).then(function(json) {
+            pUser.$portfolio.html(json.html)
+            var $grid = $('#grid')
+            if ($grid.length && !$('#mediaList').length) { // хак для списка на главной вендора
+                waitImages($grid, function() {
+                    new AnimOnScroll($grid[0], {
+                        minDuration: 0.4,
+                        maxDuration: 0.7,
+                        viewportFactor: 0.2
+                    })
+                    preloading.remove(pUser.$portfolio)
+                })
+            } else {
+                preloading.remove(pUser.$portfolio)
+            }
+            return Promise.resolve()
+        }).then(() => {
+            pUser.onSwitchSpec(specId).then((json) => {
+                if (history.replaceState) {
+                    var url = document.location.origin + document.location.pathname + json.search
+                    history.replaceState(null, null, url);
+                }
+            })
+        })
+    },
+
+    onSwitchSpec : function(filterKey) {
+        return $.ajax({
+            type     : 'PUT',
+            url      : API_URL + '/v2/users/' + pUser.info.id + '/switchSpec',
+            data     : JSON.stringify({filterKey: filterKey}),
+            dataType : 'json',
+            xhrFields: {
+                withCredentials: true
+            },
+        })
+    },
+
+    loadPortfolio : function(specId) {
+        return $.ajax({
+            type     : 'POST',
+            url      : '',
+            data     : {
+                specId: specId,
+                BITRIX_SECURITY_KEY : BITRIX_SECURITY_KEY
+            },
+            dataType : 'json',
+            xhrFields: {
+                withCredentials: true
+            },
+        })
+    },
+
+    loadPrices : function(date) {
+        var data = {
+            fields : 'busy,specs',
+            city_id: CITY_ID,
+        }
+        if (date) {
+            data.date = date
+        }
+        return $.ajax({
+            type     : 'GET',
+            url      : API_URL + '/v2/users/' + pUser.info.id,
+            data     : data,
+            dataType : 'json',
+            xhrFields: {
+                withCredentials: true
+            },
+        })
+    }
+}
+
+function initUserShow() {
+    pUser.init()
+    sidebar.init({
+        prices : false,
+    })
+}
+
+function initUserReviews() {
+    pUser.init()
+    sidebar.init()
+}
+
+function initUserRating() {
+    pUser.init()
+    sidebar.init()
+    proReviews.init()
+}
+
+function initUserCarrental() {
+    pUser.init()
+    sidebar.init({
+        prices : false,
+    })
+}
+
+function initUserReports() {
+    pUser.init()
+    sidebar.init()
+}
+function initUserContests() {
+    pUser.init()
+    sidebar.init()
+}
+function initAlbumShow() {
+    pUser.init()
+    sidebar.init()
+}
+
+/* 
+ * pUser_weddate.js
+ */
+pUser.weddate = {
+    $main : null,
+
+    date      : null,
+    busy : [],
+
+    tpl : {
+        filled : twig.compile(
+            '<div class="card_freedate-{{ status }}">' +
+                '{{ text }}' +
+                ' <a class="pCard_weddate" puser-action="set_weddate">' + t('Change') + '</a>' +
+            '</div>'
+        ),
+        empty  : twig.compile(
+            '<div class="pCard_schedule">' +
+                t('Check out prices and availability on your date') +
+                '<span class="fake_link pCard_weddate" puser-action="set_weddate">' + t('Select date') + '</span>' +
+            '</div>'
+        ),
+        spec : twig.compile(
+            '<div class="spec{% if not spec.is_active %} h{% endif %}" spec-elem="main" spec-id="{{ spec.spec.is_main ? 0 : spec.spec.filter_key }}">' +
+                '{% for price in spec.prices %}' +
+                    '<div class="spec_price">' +
+                        '<div class="spec_price_name">{{ price.title }}</div>' +
+                        '{% if price.description %}<p class="spec_price_notice">{{ price.description }}</p>{% endif %}' +
+                        '<div class="spec_price_value">{{ price.value_display }}</div>' +
+                    '</div>' +
+                '{% endfor %}' +
+            '</div>'
+        ),
+    },
+
+    events : {
+        click : function(ev) {
+            var $el = $(ev.target)
+            if ($el.is('[puser-action="set_weddate"]')) {
+                pUser.weddate.calendar.toggle($el)
+            }
+        },
+    },
+
+    init : function() {
+        var Weddate = pUser.weddate
+        Weddate.$main = pUser.$main.find('[puser-elem="weddate"]')
+        if (!Weddate.$main.length) {
+            Weddate.$main = null
+            return false
+        }
+        moment.locale(LOCALE)
+        Weddate.load.busy()
+        .then(Weddate.load.weddate)
+        .then(function() {
+            Weddate.render()
+            Weddate.$main.on(Weddate.events)
+        })
+    },
+
+    render : function() {
+        var Weddate = pUser.weddate
+        if (!Weddate.busy.length) {
+            return true
+        }
+        Weddate.$main.empty()
+        if (Weddate.date === null) {
+            Weddate.$main.append(twig.render(Weddate.tpl.empty, {}, true))
+        } else {
+            var status = 1
+            var dateText = moment(Weddate.date).format('LL')
+            var text = ''
+            var fDate = Weddate.busy.filter(function (fd) {
+                return fd.date===Weddate.date
+            })
+            if (fDate.length && fDate[0].busy) {
+                status = 3
+                text = t('Busy on {date}', {'{date}': dateText})
+            } else {
+                status = 0
+                text = t('Available on {date}', {'{date}': dateText})
+            }
+            Weddate.$main.append(twig.render(Weddate.tpl.filled, {
+                text   : text,
+                status : status
+            }, true))
+        }
+    },
+
+    redrawSpecs : function(specs) {
+        var Weddate = pUser.weddate
+        pUser.$main.find('[spec-elem="main"]').remove()
+        specs.map(function(spec){
+            var $spec = twig.render(Weddate.tpl.spec, {spec:spec}, true)
+            if (spec.is_active) {
+                pUser.$spec = $spec
+            }
+            $spec.insertAfter(Weddate.$main)
+        })
+    },
+
+    calendar : {
+        opened : false,
+        toggle : function($button) {
+            var Weddate = pUser.weddate
+            if (Weddate.calendar.opened) {
+                calendar.close()
+                return true
+            }
+
+            var schedule = {}
+            var date = new Date()
+            date.setHours(0,0,0,0)
+            var lastDate = new Date(date.getFullYear()+1, date.getMonth(), date.getDate())
+            for (date; date<=lastDate; date.setDate(date.getDate() + 1)) {
+                var day = date.getFullYear() + '-' + ('0' + (date.getMonth()+1)).slice(-2) + '-' + ('0' + date.getDate()).slice(-2)
+                var fDate = Weddate.busy.filter(function (fd) {
+                    return fd.date===day
+                })
+                var status = fDate.length && fDate[0].busy ? 3 : 0
+                schedule[day] = {
+                    status : status,
+                    title  : status ? t('Not available') : t('Available'),
+                }
+            }
+            calendar.init($button, {
+                type      : 'point',
+                interval  : '+12',
+                dates     : Weddate.date ? [Weddate.date] : null,
+                schedule  : schedule,
+                single    : true,
+            },
+            {
+                onPick : Weddate.calendar.onPick,
+                close  : Weddate.calendar.onClose,
+            })
+            Weddate.calendar.opened = true
+        },
+        onClose : function() {
+            pUser.weddate.calendar.opened = false
+        },
+        onPick : function(dates) {
+            var Weddate = pUser.weddate
+            calendar.close()
+            Weddate.date = dates.pop()
+            Weddate.setWeddingDate(Weddate.date)
+            pUser.loadPrices(Weddate.date).then(function(json){
+                Weddate.redrawSpecs(json.user.specs)
+            })
+            Weddate.render()
+        },
+    },
+
+    setWeddingDate : function(date) {
+        $.ajax({
+            type     : 'PUT',
+            url      : API_URL + '/v2/directory/filterDate',
+            data     : JSON.stringify({
+                date : date,
+            }),
+            dataType : 'json',
+            xhrFields: {
+                withCredentials: true
+            }
+        })
+    },
+
+    load : {
+        busy : function() {
+            return $.ajax({
+                type     : 'GET',
+                url      : API_URL + '/v2/users/' + pUser.info.id,
+                data     : {
+                    fields : 'busy',
+                },
+                dataType : 'json',
+                xhrFields: {
+                    withCredentials: true
+                },
+                success : function(json) {
+                    pUser.weddate.busy = json.user.busy
+                }
+            })
+        },
+        weddate : function() {
+            return $.ajax({
+                type     : 'GET',
+                url      : API_URL + '/v2/interface/date',
+                dataType : 'json',
+                xhrFields: {
+                    withCredentials: true
+                },
+                success  : function(json) {
+                    pUser.weddate.date = json.date || null
+                },
+                error : function() {
+                    pUser.weddate.date = null
+                }
+            })
+        },
+    },
+}
+/* 
+ * ppGift.js
+ */
+var ppGift = {
+    $info : null,
+
+    tpl : Twig.twig({data:
+        '<div class="ppGift">' +
+            '<h2 class="lightbox_caption">Сертификат за бронирование' + '</h2>' +
+            '<p class="ppGift_text">' +
+                'Мы искренне рады, каждый раз, когда людям удается выбрать подходящее место для своего торжества через наш сайт. Мы подобрали рестораны, при выборе которых, помимо достойного уровня сервиса, вас ждет приятный сюрприз от Горько!' +
+            '</p>' +
+            '<p class="ppGift_notice">' +
+                'Бронируя любое из этих заведений вы получаете в подарок сертификат на покупки в магазинах Л\'Этуаль.' +
+            '</p>' +
+            '<div class="ppGift_howTo">Как получить сертификат?</div>' +
+            '<ol class="ppGift_steps">' +
+                '<li class="ppGift_step">' +
+                    'Делайте свой выбор среди заведений, <a{% if source == "catalog" %} ppgift-action="show_venues"{% else %} href="{{ url.catalog }}" target="_blank"{% endif %}>участвующих в акции</a>.' +
+                '</li>' +
+                '<li class="ppGift_step">Свяжитесь с выбранным заведением по указанным на Горько! контактам и договоритесь на встречу</li>' +
+                '<li class="ppGift_step">' +
+                    '<a href="{{ url.form }}" target="_blank">Заполните анкету</a> после того как окончательно определитесь с местом проведения вашего мероприятия' +
+                '</li>' +
+                '<li class="ppGift_step">После мероприятия мы отправим ваш подарочный сертификат</li>' +
+            '</ol>' +
+            '<a href="{{ url.form }}" class="button-big" target="_blank">Заполнить анкету</a>' +
+        '</div>'
+    }),
+
+    events : {
+        click : function(ev) {
+            var $el = $(ev.target)
+            if ($el.is('[gift-action="show"]')) {
+                ppGift.show($el.attr('object-type'), $el.attr('object-id'), $el.attr('source'))
+            } else if ($el.is('[ppgift-action="show_venues"]')) {
+                ppGift.showVenues()
+            }
+        }
+    },
+
+    init : function() {
+        $(window).on(ppGift.events)
+    },
+
+    show : function(objectType, objectId, source) {
+        ppGift.$info = $(ppGift.tpl.render({
+            url : {
+                form    : 'https://www.gorko.ru/gift/' + objectType.toLowerCase() + '/' + (objectId ? '?id=' + objectId : ''),
+                catalog : '/' + document.location.pathname.split('/')[1] + '/?features=16',
+            },
+            source : source,
+        }))
+        lightbox.show(ppGift.$info, 750, {}, {isOver:true})
+    },
+
+    showVenues : function() {
+        for (var i=0; filters.list[i]; i++) {
+            if (filters.list[i].label == 'features') {
+                filters.list[i].toggle(true)
+                setTimeout(function(){
+                    filters.list[i].$values.find('[name="features[]"][value="16"]').prop('checked', true).change()
+                    filters.list[i].apply()
+                    lightbox.close()
+                }, 10)
+                break
+            }
+        }
+    },
+}
+
+$(document).ready(function() {
+    ppGift.init()
+})
+/* 
+ * services.js
+ */
+var services = {
+    map  : null,
+    favs : null,
+
+    $main : null,
+
+    init : function() {
+        if (services.$main !== null) {
+            return true
+        }
+
+        services.$main = $('#services')
+        if (!services.$main.length) {
+            services.$main = null
+            return false
+        }
+
+        services.$main.on({
+            click : function(ev) {
+                var $el = $(ev.target)
+                if ($el.is('[services-action="map"]')) {
+                    services.map.toggle()
+                }
+            }
+        })
+
+        services.map.init()
+        catalog.init()
+        services.favs.init()
+    }
+}
+
+
+function initServicesList() {
+    services.init()
+}
+
+$(document).ready(function(){
+    services.init()
+});
+/* 
+ * services_favs.js
+ */
+services.favs = {
+    $count : false,
+    $text : false,
+
+    onfav : function(count, text) {
+        with (services.favs) {
+            $count.attr('data-count', count);
+            $text.text(text);
+        }
+    },
+
+    init : function() {
+        with (services.favs) {
+            $count = services.$main.find('[services-elem="favCount"]');
+            if (!$count.length) {
+                return false;
+            }
+            $text = $count.find('[favs-elem="text"]');
+
+            user.callback.fav = onfav;
+        }
+    }
+}
+/* 
+ * services_map.js
+ */
+services.map = {
+    $main : false,
+    $toggler : false,
+
+    list : [], // вставляется в шаблон "\core\views\services\catalog_list.php"
+    type : '', // вставляется в шаблон "\core\views\services\catalog_list.php"
+    map  : null,
+
+    tpl : {
+        balloon :
+            '<div class="servicesMap_balloon" balloon-elem="main">' +
+                '<img src="$[properties.pic]" width="150" height="150">' +
+                '<a class="servicesMap_name" href="$[properties.url]">$[properties.name]</a>' +
+                '<div class="servicesMap_close" balloon-action="close"></div>' +
+            '</div>',
+        icon : '<div class="servicesMap_icon">{{ number }}</div>'
+    },
+    text : {
+        toggler : [
+            t('Show on map'),
+            t('Hide map')
+        ]
+    },
+
+    toggle : function(show) {
+        if ( (show !== false) && (show !== true) ) {
+            show = !services.$main.hasClass('_map');
+        }
+        services.$main.toggleClass('_map', show);
+        with (services.map) {
+            if (show && map === null) {
+                for (var i=0; list[i]; i++) {
+                    list[i].coords = [list[i].lat, list[i].lng]
+                }
+                map = gorkoMap.init('map', list, {
+                    numeric : true,
+                    showAllPoints : true,
+                })
+            }
+            $toggler.text(text.toggler[+show]);
+        }
+    },
+
+    init : function() {
+        with (services.map) {
+            $main = $('#map');
+            if (!$main.length) {
+                $main = false;
+                return false;
+            }
+            $toggler = services.$main.find('[services-action="map"]');
+        }
+    }
+}
+
+/* 
+ * sidebar.js
+ */
+var sidebar = {
+    prices : null,
+
+    $main : null,
+
+    object : {
+        type : null,
+        id   : 0,
+    },
+    info : null,
+
+    events : {
+        click : function(ev) {
+            var $el = $(ev.target)
+            if ($el.is('[sidebar-action="removeAvatar"]')) {
+                sidebar.removeAvatar($el)
+            }
+        },
+    },
+
+    init : function(params) {
+        sidebar.$main = $('[sidebar-elem="main"]')
+        if (!sidebar.$main.length) {
+            sidebar.$main = null
+            return false
+        }
+        sidebar.object.type = sidebar.$main.attr('object-type')
+        sidebar.object.id   = +sidebar.$main.attr('object-id')
+
+        sidebar.$main.on(sidebar.events)
+        if (params && params.prices === false) {
+            return true
+        }
+        sidebar.load.weddate()
+        .then(function (json) {
+            return sidebar.load.info(json.date || null)
+        })
+        .then(function() {
+            sidebar.prices.init()
+        })
+    },
+
+    load : {
+        info : function(date) {
+            var data = {
+                fields : 'busy,specs',
+                city_id: CITY_ID,
+            }
+            if (date) {
+                data.date = date
+            }
+            return $.ajax({
+                type     : 'GET',
+                url      : API_URL + '/v2/' + sidebar.object.type + '/' + sidebar.object.id,
+                data     : data,
+                dataType : 'json',
+                xhrFields: {
+                    withCredentials: true
+                },
+                success : function(json) {
+                    sidebar.info = json.user
+                    if (date) {
+                        sidebar.info.weddate = date
+                    }
+                }
+            })
+        },
+        weddate : function() {
+            return $.ajax({
+                type     : 'GET',
+                url      : API_URL + '/v2/interface/date',
+                dataType : 'json',
+                xhrFields: {
+                    withCredentials: true
+                }
+            })
+        },
+    },
+
+    removeAvatar : function($button) {
+        if (!$button.length || $button.hasClass('_disabled')) {
+            return false
+        }
+        var confirmed = confirm(t('Are you sure you want to delete this user\'s profile picture?'))
+        if (!confirmed) {
+            return false
+        }
+        $button.addClass('_disabled')
+        $.ajax({
+            type     : 'POST',
+            url      : '/a/avatar/delete/',
+            data     : {
+                user_id : sidebar.object.id,
+                BITRIX_SECURITY_KEY : BITRIX_SECURITY_KEY,
+            },
+            dataType : 'json',
+            xhrFields: {
+                withCredentials: true
+            },
+            success  : function(json) {
+                sidebar.$main.find('[sidebar-elem="avatar"]').attr('src', CDN_URL + '/p/p196x196x1/special/no_avatar.png')
+                $button.remove()
+            }
+        })
+    }
+}
+/* 
+ * sidebar_prices.js
+ */
+sidebar.prices = {
+    $main : null,
+    $head : null,
+
+    specIndex : null,
+    tpl : {
+        caption : '<p class="sideInfo_caption">' + t('Prices and availability') + '</p>',
+        main : twig.compile(
+            '<div class="prices">' +
+                '{% if hasFreeDates %}' +
+                    '{% if weddate %}' +
+                        '<div class="prices_head" prices-elem="head">' +
+                            '<div class="prices_day">{{ weddate.day }} <span class="prices_month">{{ weddate.month }}</span> <span class="prices_dow">{{ weddate.dow }}</span></div>' +
+                            '<a href="javascript:void(0);" class="prices_edit" sidebar-action="wedding_date">' + t('Change') + '</a>' +
+                        '</div>' +
+                        '{% if status != null %}' +
+                            '<div class="prices_freedate-{{ status }}">' +
+                                '{% if status == 1 %}' +
+                                    t('Possibly available') +
+                                '{% elseif status == 3 %}' +
+                                    t('Not available') +
+                                '{% else %}' +
+                                    t('Available') +
+                                '{% endif %}' +
+                            '</div>' +
+                        '{% endif %}' +
+                    '{% else %}' +
+                        '<div class="prices_pickDate" prices-elem="head"><a href="javascript:void(0);" sidebar-action="wedding_date">' + t('Select date') + '</a></div>' +
+                    '{% endif %}' +
+                '{% endif %}' +
+                '{% if specs and specs.length > 1 %}' +
+                    '<div class="prices_spec">' +
+                        '<p class="prices_caption">' + t('Specialization') + '</p>' +
+                        '<select class="prices_select" name="spec" sidebar-action="spec">' +
+                            '{% for spec in specs %}' +
+                                '<option value="{{ spec.spec.filter_key }}"{% if spec.is_active %} selected{% endif %}>{{ spec.spec.title}}</option>' +
+                            '{% endfor %}' +
+                        '</select>' +
+                    '</div>' +
+                '{% endif %}' +
+                '{% if prices and prices.length %}' +
+                    '<div class="prices_list">' +
+                        '{% for price in prices %}' +
+                            '<div class="price">' +
+                                '<p class="price_name">{{ price.title }}</p>' +
+                                '{% if price.description %}' +
+                                    '<p class="price_notice">{{ price.description }}</p>' +
+                                '{% endif %}' +
+                                '<p class="price_cost">{{ price.value_display }}</p>' +
+                            '</div>' +
+                        '{% endfor %}' +
+                    '</div>' +
+                '{% endif %}' +
+            '</div>'
+        ),
+        prices : twig.compile(
+            '<div class="prices_list" prices-elem="prices">' +
+                '{% for price in prices %}' +
+                    '<div class="price">' +
+                        '<p class="price_name">{{ price.title }}</p>' +
+                        '{% if price.description %}' +
+                            '<p class="price_notice">{{ price.description }}</p>' +
+                        '{% endif %}' +
+                        '<p class="price_cost">{{ price.value_display }}</p>' +
+                    '</div>' +
+                '{% endfor %}' +
+            '</div>'
+        ),
+    },
+
+    events : {
+        click : function(ev) {
+            var $el = $(ev.target)
+            if ($el.is('[sidebar-action="wedding_date"]')) {
+                sidebar.prices.calendar.toggle()
+            }
+        },
+        change : function(ev) {
+            var $el = $(ev.target)
+            if ($el.is('[sidebar-action="spec"]')) {
+                sidebar.prices.changeSpec($el.val())
+            }
+        }
+    },
+
+    init : function() {
+        if (!sidebar.info.busy.length) {
+            if (!sidebar.info.specs.length) {
+                return false
+            }
+            var noPrices = true
+            for (var i=0; sidebar.info.specs[i]; i++) {
+                if (sidebar.info.specs[i].prices.length) {
+                    noPrices = false
+                    break
+                }
+            }
+            if (noPrices) {
+                return false
+            }
+        }
+        var Prices = sidebar.prices
+        var $block = sidebar.$main.find('[sidebar-elem="prices"]')
+        if (Prices.$main === null) {
+            $(Prices.tpl.caption).appendTo($block)
+        } else {
+            Prices.$head = null
+            Prices.$main.remove()
+            Prices.$main = null
+        }
+
+        for (var i=0; sidebar.info.specs[i]; i++) {
+            if (sidebar.info.specs[i].is_active) {
+                Prices.specIndex = i
+                break
+            }
+        }
+
+        Prices.$main = Prices.render.main().appendTo($block)
+        Prices.$head = Prices.$main.find('[prices-elem="head"]')
+        Prices.render.prices()
+        Prices.$main.on(Prices.events)
+    },
+
+    calendar : {
+        opened : false,
+        toggle : function() {
+            var Prices = sidebar.prices
+            if (Prices.calendar.opened) {
+                calendar.close()
+                return true
+            }
+            var schedule = {}
+            var date = new Date()
+            date.setHours(0,0,0,0)
+            var lastDate = new Date(date.getFullYear()+1, date.getMonth(), date.getDate())
+            for (date; date<=lastDate; date.setDate(date.getDate() + 1)) {
+                var day = date.getFullYear() + '-' + ('0' + (date.getMonth()+1)).slice(-2) + '-' + ('0' + date.getDate()).slice(-2)
+                var fDate = sidebar.info.busy.filter(function (fd) {
+                    return fd.date===day
+                })
+                var status = fDate.length && fDate[0].busy ? 3 : 0
+                schedule[day] = {
+                    status : status,
+                    title  : status ? t('Not available') : t('Available'),
+                }
+            }
+            calendar.init(Prices.$head, {
+                type     : 'point',
+                interval : '+12',
+                dates    : sidebar.info.weddate ? [sidebar.info.weddate] : null,
+                schedule : schedule,
+                single   : true,
+            },
+            {
+                onPick : Prices.calendar.onPick,
+                close  : Prices.calendar.onClose,
+            })
+            Prices.calendar.opened = true
+        },
+        onClose : function() {
+            sidebar.prices.calendar.opened = false
+        },
+        onPick : function(dates) {
+            var Prices = sidebar.prices
+            calendar.close()
+            sidebar.info.weddate = dates.pop()
+            Prices.setWeddingDate(sidebar.info.weddate)
+            sidebar.load.info(sidebar.info.weddate || null)
+                .then(Prices.init)
+        },
+    },
+
+    setWeddingDate : function(date) {
+        $.ajax({
+            type     : 'PUT',
+            url      : API_URL + '/v2/directory/filterDate',
+            data     : JSON.stringify({
+                date : date,
+            }),
+            dataType : 'json',
+            xhrFields: {
+                withCredentials: true
+            }
+        })
+    },
+
+    render : {
+        main : function() {
+            var Prices = sidebar.prices
+            var weddate = null
+            if (sidebar.info.weddate) {
+                moment.locale(LOCALE)
+                var parsedWeddate = moment(sidebar.info.weddate)
+                weddate = {
+                    day : parsedWeddate.format('DD'),
+                    month : parsedWeddate.format('MMM').replace('.', ''),
+                    dow : parsedWeddate.format('dd'),
+                }
+            }
+            var status = null
+            if (sidebar.info.busy.length) {
+                var fDate = sidebar.info.busy.filter(function (fd) {
+                    return fd.date===sidebar.info.weddate
+                })
+                status = fDate.length && fDate[0].busy ? 3 : 0
+            }
+            return twig.render(Prices.tpl.main, {
+                hasFreeDates : sidebar.info.busy.length,
+                weddate : weddate,
+                status  : status,
+                specs   : sidebar.info.specs,
+            }, true)
+        },
+        prices : function() {
+            var Prices = sidebar.prices
+            var $prices = Prices.$main.find('[prices-elem="prices"]')
+            if ($prices.length) {
+                $prices.remove()
+            }
+            var prices = sidebar.info.specs && sidebar.info.specs[Prices.specIndex] ? sidebar.info.specs[Prices.specIndex].prices : []
+            if (!prices.length) {
+                return false
+            }
+            twig.render(Prices.tpl.prices, {
+                prices : prices,
+            }, true).appendTo(Prices.$main)
+        },
+    },
+
+    changeSpec : function(specId) {
+        var Prices = sidebar.prices
+        if (Prices.specIndex !== null) {
+            sidebar.info.specs[Prices.specIndex].is_active = false
+        }
+        for (var i=0; sidebar.info.specs[i]; i++) {
+            if (sidebar.info.specs[i].spec.filter_key == specId) {
+                sidebar.info.specs[i].is_active = true
+                Prices.specIndex = i
+                break
+            }
+        }
+        Prices.render.prices()
+        $.ajax({
+            type     : 'PUT',
+            url      : API_URL + '/v2/users/' + sidebar.info.id + '/switchSpec',
+            data     : JSON.stringify({filterKey: specId}),
+            dataType : 'json',
+            xhrFields: {
+                withCredentials: true
+            },
+            success : function(json) {
+                var $showMenu = $('[menu-elem="show"]')
+                var url = $showMenu.attr('href')
+                var matched = url.match(/\?service=(\d+)/g)
+                if (matched) {
+                    url = url.replace(matched[0], json.search)
+                } else {
+                    url += json.search
+                }
+                $showMenu.attr('href', url)
+            }
+        })
+    },
+}
